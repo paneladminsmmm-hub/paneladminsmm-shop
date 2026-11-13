@@ -403,3 +403,78 @@ document.head.appendChild(razorpayScript);
   }
 })();
 
+
+document.addEventListener("submit", async function(e) {
+  const form = e.target;
+
+  if (form.id === "orderForm") {
+    e.preventDefault();
+    const f = new FormData(form);
+
+    try {
+      const result = await api("/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          serviceId: Number(f.get("serviceId")),
+          targetUrl: f.get("targetUrl"),
+          quantity: Number(f.get("quantity"))
+        })
+      });
+      alert(result.message);
+      loadTab("orders");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  if (form.id === "fundForm") {
+    e.preventDefault();
+    const amount = Number(new FormData(form).get("amount"));
+
+    try {
+      const result = await api("/payments/create", {
+        method: "POST",
+        body: JSON.stringify({ amount })
+      });
+
+      if (!window.Razorpay) {
+        throw new Error("Payment checkout is not loaded.");
+      }
+
+      new Razorpay({
+        key: result.keyId,
+        amount: result.amount,
+        currency: result.currency,
+        order_id: result.orderId,
+        name: "SMM.com",
+        handler: function() {
+          alert("Payment submitted. Wallet credit requires verified webhook.");
+          loadTab("wallet");
+        }
+      }).open();
+
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  if (form.id === "ticketForm") {
+    e.preventDefault();
+    const f = new FormData(form);
+
+    try {
+      await api("/tickets", {
+        method: "POST",
+        body: JSON.stringify({
+          subject: f.get("subject"),
+          message: f.get("message")
+        })
+      });
+      alert("Support ticket submitted!");
+      loadTab("tickets");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+});
+
