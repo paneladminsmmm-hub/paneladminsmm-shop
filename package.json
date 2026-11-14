@@ -8,10 +8,10 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "check": "node --check server.js && node --check src/provider.js && node --check public/app.js"
-  },
-  "engines": {
+   },
+    "engines": {
   "node": "22.x"
-  }
+},
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.8.1",
