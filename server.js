@@ -9,6 +9,7 @@ const bcrypt = require("bcryptjs");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
+const crypto = require("crypto");
 
 const {
   providerServices,
@@ -18,116 +19,28 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const isProduction = process.env.NODE_ENV === "production";
-
-if (isProduction && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
-  throw new Error("Set a SESSION_SECRET of at least 32 characters in Render Environment.");
-}
+const db = new Database("database.sqlite");
 
 app.set("trust proxy", 1);
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-const db = new Database(process.env.DB_PATH || path.join(__dirname, "database.sqlite"));
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+app.use(helmet({
+  contentSecurityPolicy: false
+}));
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  balance REAL NOT NULL DEFAULT 0,
-  is_admin INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 
-CREATE TABLE IF NOT EXISTS services (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  provider_id TEXT UNIQUE,
-  name TEXT NOT NULL,
-  category TEXT DEFAULT 'Other',
-  rate REAL NOT NULL DEFAULT 0,
-  min_qty INTEGER NOT NULL DEFAULT 1,
-  max_qty INTEGER NOT NULL DEFAULT 100000,
-  description TEXT DEFAULT '',
-  active INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  service_id INTEGER NOT NULL,
-  provider_order_id TEXT,
-  link TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  charge REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Pending',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(user_id) REFERENCES users(id),
-  FOREIGN KEY(service_id) REFERENCES services(id)
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  amount REAL NOT NULL,
-  reference TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Pending',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS tickets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  subject TEXT NOT NULL,
-  message TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'Open',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-`);
-
-function addColumnIfMissing(table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some(c => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
-
-// Basic compatibility for databases created by earlier versions.
-addColumnIfMissing("users", "password_hash", "TEXT");
-addColumnIfMissing("users", "balance", "REAL NOT NULL DEFAULT 0");
-addColumnIfMissing("users", "is_admin", "INTEGER NOT NULL DEFAULT 0");
-addColumnIfMissing("services", "provider_id", "TEXT");
-addColumnIfMissing("services", "category", "TEXT DEFAULT 'Other'");
-addColumnIfMissing("services", "rate", "REAL NOT NULL DEFAULT 0");
-addColumnIfMissing("services", "min_qty", "INTEGER NOT NULL DEFAULT 1");
-addColumnIfMissing("services", "max_qty", "INTEGER NOT NULL DEFAULT 100000");
-addColumnIfMissing("services", "description", "TEXT DEFAULT ''");
-addColumnIfMissing("services", "active", "INTEGER NOT NULL DEFAULT 1");
-addColumnIfMissing("orders", "provider_order_id", "TEXT");
-addColumnIfMissing("orders", "status", "TEXT NOT NULL DEFAULT 'Pending'");
-addColumnIfMissing("payments", "reference", "TEXT");
-addColumnIfMissing("payments", "status", "TEXT NOT NULL DEFAULT 'Pending'");
-addColumnIfMissing("tickets", "status", "TEXT NOT NULL DEFAULT 'Open'");
-
-const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
-const adminPassword = process.env.ADMIN_PASSWORD;
-
-if (adminEmail && adminPassword) {
-  const existingAdmin = db.prepare("SELECT id FROM users WHERE email = ?").get(adminEmail);
-  if (!existingAdmin) {
-    const hash = bcrypt.hashSync(adminPassword, 12);
-    db.prepare(
-      "INSERT INTO users (email, password_hash, balance, is_admin) VALUES (?, ?, 0, 1)"
-    ).run(adminEmail, hash);
-  } else {
-    db.prepare("UPDATE users SET is_admin = 1 WHERE email = ?").run(adminEmail);
-  }
+if (process.env.NODE_ENV === "production" &&
+    (!process.env.SESSION_SECRET ||
+     process.env.SESSION_SECRET.length < 32)) {
+  throw new Error("SESSION_SECRET must be at least 32 characters.");
 }
 
 app.use(session({
@@ -141,19 +54,101 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: "lax",
-    secure: isProduction,
+    secure: process.env.NODE_ENV === "production",
     maxAge: 7 * 24 * 60 * 60 * 1000
   }
 }));
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: "draft-7",
-  legacyHeaders: false
-});
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
 
-function escapeHtml(value) {
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL,
+  balance REAL NOT NULL DEFAULT 0,
+  role TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS services (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider_id TEXT UNIQUE,
+  name TEXT NOT NULL,
+  category TEXT,
+  rate REAL NOT NULL DEFAULT 0,
+  min INTEGER NOT NULL DEFAULT 1,
+  max INTEGER NOT NULL DEFAULT 1000000,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  service_id INTEGER NOT NULL,
+  provider_order_id TEXT,
+  link TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  charge REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(service_id) REFERENCES services(id)
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  amount REAL NOT NULL,
+  reference TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Open',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+`);
+
+function addColumnIfMissing(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing("payments", "phone", "TEXT");
+addColumnIfMissing("payments", "approved_at", "TEXT");
+addColumnIfMissing("orders", "provider_order_id", "TEXT");
+
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+
+if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+  const existingAdmin = db.prepare(
+    "SELECT id FROM users WHERE email = ?"
+  ).get(ADMIN_EMAIL);
+
+  if (!existingAdmin) {
+    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 12);
+    db.prepare(`
+      INSERT INTO users (name,email,password,role)
+      VALUES (?,?,?,'admin')
+    `).run("Administrator", ADMIN_EMAIL, hash);
+  }
+}
+
+function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -169,104 +164,96 @@ function money(value) {
 
 function page(title, content, user = null) {
   const nav = user ? `
-    <a href="/dashboard">Dashboard</a>
-    <a href="/services">Services</a>
-    <a href="/new-order">New Order</a>
-    <a href="/orders">Orders</a>
-    <a href="/add-funds">Add Funds</a>
-    <a href="/support">Support</a>
-    ${user.is_admin ? '<a href="/admin">Admin</a>' : ""}
-    <form method="post" action="/logout" style="display:inline">
-      <button class="navbutton">Logout</button>
-    </form>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/services">Services</a>
+      <a href="/new-order">New Order</a>
+      <a href="/orders">Orders</a>
+      <a href="/add-funds">Add Funds</a>
+      <a href="/support">Support</a>
+      ${user.role === "admin" ? '<a href="/admin">Admin</a>' : ""}
+      <a href="/logout">Logout</a>
+    </nav>
   ` : `
-    <a href="/login">Login</a>
-    <a href="/register">Register</a>
+    <nav>
+      <a href="/login">Login</a>
+      <a href="/register">Register</a>
+    </nav>
   `;
 
-  return `<!doctype html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} - PanelAdminSMM.shop</title>
+<title>${esc(title)} - PanelAdminSMM.shop</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#f4f6fb;color:#202638;font-family:Arial,sans-serif}
-header{background:#111827;color:white;padding:16px}
-.head{max-width:1100px;margin:auto;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.brand{font-size:21px;font-weight:bold;color:#fff;text-decoration:none}
-nav{display:flex;gap:13px;align-items:center;flex-wrap:wrap}
+body{margin:0;background:#f3f4f6;color:#222;font-family:Arial,sans-serif}
+header{background:#111827;color:white;padding:18px;text-align:center}
+header h2{margin:0;color:#ff3030}
+nav{background:#202938;padding:12px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
 nav a{color:white;text-decoration:none;font-size:14px}
-.navbutton{background:#374151;padding:7px 10px}
-main{max-width:1100px;margin:25px auto;padding:0 15px}
-.card{background:white;padding:20px;border-radius:12px;margin-bottom:18px;box-shadow:0 2px 12px #0000000b}
-h1,h2{margin-top:0}
-input,select,textarea{width:100%;padding:12px;margin:7px 0 14px;border:1px solid #d5d9e2;border-radius:7px;font-size:15px;background:white}
-button,.btn{display:inline-block;background:#dc2626;color:white;border:0;padding:11px 16px;border-radius:7px;text-decoration:none;cursor:pointer;font-size:14px}
-button:hover,.btn:hover{background:#b91c1c}
-.navbutton:hover{background:#4b5563}
-table{width:100%;border-collapse:collapse;background:white}
-th,td{text-align:left;padding:11px;border-bottom:1px solid #eee;font-size:14px}
-th{background:#f8fafc}
+main{max-width:1000px;margin:22px auto;padding:16px}
+.card{background:white;padding:20px;margin-bottom:16px;border-radius:12px;box-shadow:0 2px 10px #0000000c}
+h2,h3{margin-top:0}
+input,select,textarea{width:100%;padding:12px;margin:7px 0 14px;border:1px solid #ddd;border-radius:7px;font-size:15px}
+button,.btn{display:inline-block;background:#e32636;color:white;padding:11px 17px;border:0;border-radius:7px;text-decoration:none;cursor:pointer}
+button:hover,.btn:hover{background:#b91c2c}
+table{width:100%;border-collapse:collapse;min-width:600px}
+th,td{padding:11px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
 .tablewrap{overflow-x:auto}
-.muted{color:#667085;font-size:14px}
-.success{background:#dcfce7;color:#166534;padding:12px;border-radius:7px;margin-bottom:15px}
-.error{background:#fee2e2;color:#991b1b;padding:12px;border-radius:7px;margin-bottom:15px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px}
-.stat{font-size:25px;font-weight:bold;color:#dc2626}
-.service-choice{display:block;border:1px solid #e5e7eb;padding:12px;border-radius:8px;margin:8px 0;cursor:pointer;background:#fff}
-.service-choice.selected{border:2px solid #dc2626;background:#fff7f7}
-.service-choice small{display:block;color:#667085;margin-top:5px}
-footer{text-align:center;color:#667085;padding:25px}
-@media(max-width:600px){nav{gap:9px}.card{padding:15px}th,td{padding:8px}}
+.muted{color:#666;font-size:14px}
+.success{color:green}.error{color:#c00}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.big{font-size:24px;font-weight:bold}
+footer{text-align:center;padding:25px;color:#777}
+a{color:#d21f32}
 </style>
 </head>
 <body>
-<header><div class="head">
-<a class="brand" href="/">PanelAdminSMM.shop</a>
-<nav>${nav}</nav>
-</div></header>
+<header><h2>ROYAL PANEL</h2><div>PanelAdminSMM.shop</div></header>
+${nav}
 <main>${content}</main>
-<footer>© ${new Date().getFullYear()} PanelAdminSMM.shop</footer>
-</body>
-</html>`;
+<footer>PanelAdminSMM.shop · Social Media Services</footer>
+</body></html>`;
 }
 
 function currentUser(req) {
   if (!req.session.userId) return null;
-  return db.prepare(
-    "SELECT id,email,balance,is_admin FROM users WHERE id=?"
-  ).get(req.session.userId) || null;
+  return db.prepare("SELECT id,name,email,balance,role FROM users WHERE id=?")
+    .get(req.session.userId);
 }
 
 function requireLogin(req, res, next) {
-  if (!currentUser(req)) return res.redirect("/login");
+  const user = currentUser(req);
+  if (!user) return res.redirect("/login");
+  req.user = user;
   next();
 }
 
 function requireAdmin(req, res, next) {
   const user = currentUser(req);
-  if (!user || !user.is_admin) {
-    return res.status(403).send(page("Access denied", '<div class="card"><h2>Access denied</h2></div>', user));
+  if (!user || user.role !== "admin") {
+    return res.status(403).send(page("Access denied",
+      '<div class="card"><h2>Access denied</h2></div>', user));
   }
+  req.user = user;
   next();
 }
 
-function messageBox(req) {
-  if (req.query.error) return `<div class="error">${escapeHtml(req.query.error)}</div>`;
-  if (req.query.success) return `<div class="success">${escapeHtml(req.query.success)}</div>`;
-  return "";
+function notice(message, type = "success") {
+  return `<p class="${type}">${esc(message)}</p>`;
 }
 
 app.get("/", (req, res) => {
   const user = currentUser(req);
   res.send(page("Home", `
     <div class="card">
-      <h1>Welcome to PanelAdminSMM.shop</h1>
-      <p>Social Media Marketing Services</p>
-      <p class="muted">Instagram, YouTube, Facebook and other social media services.</p>
-      <a class="btn" href="${user ? "/dashboard" : "/register"}">${user ? "Open Dashboard" : "Get Started"}</a>
+      <h2>Welcome to PanelAdminSMM.shop</h2>
+      <p>Buy social media services easily.</p>
+      <a class="btn" href="/register">Create Account</a>
+      <a class="btn" href="/login">Login</a>
     </div>
   `, user));
 });
@@ -275,32 +262,39 @@ app.get("/register", (req, res) => {
   res.send(page("Register", `
     <div class="card">
       <h2>Create Account</h2>
-      ${messageBox(req)}
-      <form method="post" action="/register">
-        <label>Email</label><input type="email" name="email" required>
-        <label>Password</label><input type="password" name="password" minlength="8" required>
-        <button type="submit">Register</button>
+      <form method="POST" action="/register">
+        <label>Full Name</label>
+        <input name="name" required maxlength="80">
+        <label>Email</label>
+        <input type="email" name="email" required>
+        <label>Password</label>
+        <input type="password" name="password" required minlength="8">
+        <button>Create Account</button>
       </form>
       <p>Already registered? <a href="/login">Login</a></p>
     </div>
   `));
 });
 
-app.post("/register", authLimiter, async (req, res) => {
+app.post("/register", async (req, res) => {
+  const name = String(req.body.name || "").trim();
   const email = String(req.body.email || "").trim().toLowerCase();
   const password = String(req.body.password || "");
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8) {
-    return res.redirect("/register?error=Enter%20a%20valid%20email%20and%20password%20of%208%20characters");
+
+  if (!name || !email || password.length < 8) {
+    return res.send(page("Register", notice("Enter valid details. Password must be at least 8 characters.", "error")));
   }
+
   try {
     const hash = await bcrypt.hash(password, 12);
-    const result = db.prepare(
-      "INSERT INTO users (email,password_hash,balance,is_admin) VALUES (?, ?, 0, 0)"
-    ).run(email, hash);
-    req.session.userId = Number(result.lastInsertRowid);
+    const result = db.prepare(`
+      INSERT INTO users (name,email,password) VALUES (?,?,?)
+    `).run(name, email, hash);
+
+    req.session.userId = result.lastInsertRowid;
     res.redirect("/dashboard");
-  } catch {
-    res.redirect("/register?error=Email%20already%20registered");
+  } catch (error) {
+    res.send(page("Register", notice("This email may already be registered.", "error")));
   }
 });
 
@@ -308,511 +302,555 @@ app.get("/login", (req, res) => {
   res.send(page("Login", `
     <div class="card">
       <h2>Login</h2>
-      ${messageBox(req)}
-      <form method="post" action="/login">
-        <label>Email</label><input type="email" name="email" required>
-        <label>Password</label><input type="password" name="password" required>
-        <button type="submit">Login</button>
+      <form method="POST" action="/login">
+        <label>Email</label>
+        <input type="email" name="email" required>
+        <label>Password</label>
+        <input type="password" name="password" required>
+        <button>Login</button>
       </form>
-      <p>New user? <a href="/register">Create account</a></p>
+      <p>New user? <a href="/register">Register</a></p>
     </div>
   `));
 });
 
-app.post("/login", authLimiter, async (req, res) => {
+app.post("/login", async (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
   const password = String(req.body.password || "");
   const user = db.prepare("SELECT * FROM users WHERE email=?").get(email);
 
-  if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
-    return res.redirect("/login?error=Incorrect%20email%20or%20password");
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.send(page("Login", notice("Incorrect email or password.", "error")));
   }
 
-  req.session.regenerate(err => {
-    if (err) return res.status(500).send("Login session error");
-    req.session.userId = user.id;
-    res.redirect("/dashboard");
-  });
+  req.session.userId = user.id;
+  res.redirect("/dashboard");
 });
 
-app.post("/logout", requireLogin, (req, res) => {
+app.get("/logout", (req, res) => {
   req.session.destroy(() => res.redirect("/login"));
 });
 
 app.get("/dashboard", requireLogin, (req, res) => {
-  const user = currentUser(req);
-  const orders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE user_id=?").get(user.id).n;
-  const payments = db.prepare("SELECT COUNT(*) AS n FROM payments WHERE user_id=? AND status='Pending'").get(user.id).n;
+  const orderCount = db.prepare(
+    "SELECT COUNT(*) AS total FROM orders WHERE user_id=?"
+  ).get(req.user.id).total;
 
-  res.send(page("Dashboard", `
-    <h1>Dashboard</h1>
-    <div class="grid">
-      <div class="card"><p class="muted">Available Balance</p><div class="stat">${money(user.balance)}</div></div>
-      <div class="card"><p class="muted">Total Orders</p><div class="stat">${orders}</div></div>
-      <div class="card"><p class="muted">Pending Payments</p><div class="stat">${payments}</div></div>
-    </div>
+  const content = `
     <div class="card">
-      <h2>Welcome!</h2>
-      <p>${escapeHtml(user.email)}</p>
+      <h2>Hello, ${esc(req.user.name)}</h2>
+      <p>Your account dashboard</p>
+      <div class="grid">
+        <div class="card"><div class="muted">Available Balance</div><div class="big">${money(req.user.balance)}</div></div>
+        <div class="card"><div class="muted">Total Orders</div><div class="big">${orderCount}</div></div>
+      </div>
       <a class="btn" href="/new-order">Place New Order</a>
       <a class="btn" href="/add-funds">Add Funds</a>
     </div>
-  `, user));
+  `;
+  res.send(page("Dashboard", content, req.user));
 });
 
 app.get("/services", requireLogin, (req, res) => {
-  const user = currentUser(req);
-  const services = db.prepare(
-    "SELECT * FROM services WHERE active=1 ORDER BY category,name"
-  ).all();
+  const search = String(req.query.search || "").trim();
+  let services;
+
+  if (search) {
+    services = db.prepare(`
+      SELECT * FROM services
+      WHERE active=1 AND (name LIKE ? OR category LIKE ?)
+      ORDER BY category,name LIMIT 500
+    `).all("%" + search + "%", "%" + search + "%");
+  } else {
+    services = db.prepare(
+      "SELECT * FROM services WHERE active=1 ORDER BY category,name LIMIT 500"
+    ).all();
+  }
 
   const rows = services.map(s => `
-    <tr data-search="${escapeHtml((s.name + " " + s.category + " " + s.id).toLowerCase())}">
+    <tr>
       <td>${s.id}</td>
-      <td>${escapeHtml(s.category)}</td>
-      <td>${escapeHtml(s.name)}</td>
-      <td>${money(s.rate)}</td>
-      <td>${s.min_qty} - ${s.max_qty}</td>
+      <td>${esc(s.category || "Other")}</td>
+      <td>${esc(s.name)}</td>
+      <td>${money(s.rate)} / 1000</td>
+      <td>${s.min} - ${s.max}</td>
     </tr>
   `).join("");
 
   res.send(page("Services", `
     <div class="card">
-      <h1>All Services</h1>
-      <input id="serviceSearch" type="search" placeholder="Search service name, category or ID...">
-      <p class="muted"><span id="serviceCount">${services.length}</span> services available</p>
-      <div class="tablewrap">
-      <table><thead><tr><th>ID</th><th>Category</th><th>Service</th><th>Rate</th><th>Quantity</th></tr></thead>
-      <tbody id="serviceRows">${rows || '<tr><td colspan="5">No services available. Admin can sync services.</td></tr>'}</tbody>
+      <h2>Available Services</h2>
+      <form method="GET">
+        <input name="search" placeholder="Search services..." value="${esc(search)}">
+        <button>Search</button>
+      </form>
+      <div class="tablewrap"><table>
+        <tr><th>ID</th><th>Category</th><th>Service</th><th>Rate</th><th>Min-Max</th></tr>
+        ${rows || "<tr><td colspan='5'>No services found. Please sync services from Admin.</td></tr>"}
       </table></div>
     </div>
-    <script>
-    const search=document.getElementById("serviceSearch");
-    search.addEventListener("input",()=>{
-      const q=search.value.toLowerCase();
-      let count=0;
-      document.querySelectorAll("#serviceRows tr").forEach(row=>{
-        const show=row.dataset.search?.includes(q);
-        row.hidden=!show;
-        if(show)count++;
-      });
-      document.getElementById("serviceCount").textContent=count;
-    });
-    </script>
-  `, user));
+  `, req.user));
 });
 
 app.get("/new-order", requireLogin, (req, res) => {
-  const user = currentUser(req);
   const services = db.prepare(
     "SELECT * FROM services WHERE active=1 ORDER BY category,name"
   ).all();
 
-  const safeServices = JSON.stringify(services.map(s => ({
-    id: s.id,
-    name: s.name,
-    category: s.category,
-    rate: s.rate,
-    min: s.min_qty,
-    max: s.max_qty
-  }))).replace(/</g, "\\u003c");
+  const options = services.map(s =>
+    `<option value="${s.id}">${esc(s.name)} — ${money(s.rate)}/1000 (ID ${s.id})</option>`
+  ).join("");
 
   res.send(page("New Order", `
     <div class="card">
-      <h1>Place New Order</h1>
-      ${messageBox(req)}
-      <p>Available balance: <b>${money(user.balance)}</b></p>
-      <form method="post" action="/new-order" id="orderForm">
-        <label>Search service</label>
-        <input type="search" id="serviceSearch" placeholder="Type service name or category...">
-        <div id="serviceList"></div>
-        <input type="hidden" name="service_id" id="serviceId" required>
-        <div id="selectedService" class="success" hidden></div>
-        <label>Link</label>
+      <h2>Place New Order</h2>
+      <p>Balance: <b>${money(req.user.balance)}</b></p>
+      <form method="POST" action="/new-order">
+        <label>Select Service</label>
+        <input id="serviceSearch" placeholder="Search service..." oninput="filterServices()">
+        <select name="service_id" id="serviceSelect" required size="7">
+          ${options}
+        </select>
+        <label>Post / Profile Link</label>
         <input type="url" name="link" placeholder="https://..." required>
         <label>Quantity</label>
-        <input type="number" name="quantity" id="quantity" min="1" required>
-        <p id="estimate" class="muted">Estimated charge: ₹0.00</p>
-        <button type="submit">Submit Order</button>
+        <input type="number" name="quantity" min="1" required>
+        <button>Submit Order</button>
       </form>
     </div>
     <script>
-    const services=${safeServices};
-    const list=document.getElementById("serviceList");
-    const search=document.getElementById("serviceSearch");
-    const serviceId=document.getElementById("serviceId");
-    const selected=document.getElementById("selectedService");
-    const quantity=document.getElementById("quantity");
-    const estimate=document.getElementById("estimate");
-    let chosen=null;
-
-    function render(){
-      const q=search.value.toLowerCase();
-      const matches=services.filter(s=>(s.name+" "+s.category+" "+s.id).toLowerCase().includes(q)).slice(0,100);
-      list.innerHTML="";
-      if(!matches.length){list.textContent="No matching services found.";return;}
-      matches.forEach(s=>{
-        const b=document.createElement("button");
-        b.type="button";
-        b.className="service-choice";
-        b.style.width="100%";
-        b.style.color="#202638";
-        b.style.textAlign="left";
-        b.style.background=chosen&&chosen.id===s.id?"#fff7f7":"white";
-        b.innerHTML="";
-        const name=document.createElement("strong");
-        name.textContent=s.name;
-        const info=document.createElement("small");
-        info.textContent=s.category+" | Rate: ₹"+Number(s.rate).toFixed(2)+" | Min "+s.min+" / Max "+s.max;
-        b.append(name,info);
-        b.addEventListener("click",()=>{
-          chosen=s;
-          serviceId.value=s.id;
-          selected.hidden=false;
-          selected.textContent="Selected: "+s.name;
-          quantity.min=s.min;
-          quantity.max=s.max;
-          quantity.value=s.min;
-          updateEstimate();
-          render();
-        });
-        list.appendChild(b);
-      });
+    function filterServices(){
+      const q=document.getElementById('serviceSearch').value.toLowerCase();
+      const sel=document.getElementById('serviceSelect');
+      for(const o of sel.options){o.hidden=!o.text.toLowerCase().includes(q);}
     }
-    function updateEstimate(){
-      if(!chosen){estimate.textContent="Estimated charge: ₹0.00";return;}
-      const qty=Number(quantity.value||0);
-      const cost=(Number(chosen.rate)*qty)/1000;
-      estimate.textContent="Estimated charge: ₹"+cost.toFixed(2);
-    }
-    search.addEventListener("input",render);
-    quantity.addEventListener("input",updateEstimate);
-    document.getElementById("orderForm").addEventListener("submit",e=>{
-      if(!chosen||!serviceId.value){e.preventDefault();alert("Please select a service.");}
-    });
-    render();
     </script>
-  `, user));
+  `, req.user));
 });
 
 app.post("/new-order", requireLogin, async (req, res) => {
-  const user = currentUser(req);
   const serviceId = Number(req.body.service_id);
   const quantity = Number(req.body.quantity);
   const link = String(req.body.link || "").trim();
-
-  if (!Number.isInteger(serviceId) || !Number.isInteger(quantity) || quantity < 1 ||
-      !/^https?:\/\/\S+$/i.test(link)) {
-    return res.redirect("/new-order?error=Please%20enter%20valid%20order%20details");
-  }
 
   const service = db.prepare(
     "SELECT * FROM services WHERE id=? AND active=1"
   ).get(serviceId);
 
-  if (!service || !service.provider_id) {
-    return res.redirect("/new-order?error=Service%20not%20available");
+  if (!service || !Number.isInteger(quantity) ||
+      quantity < service.min || quantity > service.max ||
+      !/^https?:\/\//i.test(link)) {
+    return res.send(page("New Order", notice("Invalid service, link or quantity.", "error"), req.user));
   }
 
-  if (quantity < service.min_qty || quantity > service.max_qty) {
-    return res.redirect("/new-order?error=Quantity%20is%20outside%20the%20allowed%20range");
-  }
-
-  const charge = Number(((service.rate * quantity) / 1000).toFixed(2));
-  if (!Number.isFinite(charge) || charge <= 0) {
-    return res.redirect("/new-order?error=Invalid%20service%20price");
+  const charge = Math.ceil((service.rate * quantity / 1000) * 100) / 100;
+  if (charge <= 0 || charge > req.user.balance) {
+    return res.send(page("New Order", notice("Insufficient balance. Please add funds.", "error"), req.user));
   }
 
   const reserve = db.transaction(() => {
-    const freshUser = db.prepare("SELECT balance FROM users WHERE id=?").get(user.id);
-    if (!freshUser || freshUser.balance < charge) return false;
-    db.prepare("UPDATE users SET balance=balance-? WHERE id=?").run(charge, user.id);
-    return true;
+    const result = db.prepare(
+      "UPDATE users SET balance=balance-? WHERE id=? AND balance>=?"
+    ).run(charge, req.user.id, charge);
+
+    if (!result.changes) throw new Error("Insufficient balance");
+
+    return db.prepare(`
+      INSERT INTO orders (user_id,service_id,link,quantity,charge,status)
+      VALUES (?,?,?,?,?,'Processing')
+    `).run(req.user.id, service.id, link, quantity, charge).lastInsertRowid;
   });
 
-  if (!reserve()) {
-    return res.redirect("/new-order?error=Insufficient%20balance.%20Please%20add%20funds");
+  let orderId;
+  try {
+    orderId = reserve();
+  } catch (error) {
+    return res.send(page("New Order", notice("Unable to reserve balance.", "error"), req.user));
   }
 
   try {
     const result = await providerAddOrder(service.provider_id, link, quantity);
-    if (!result || !result.order) throw new Error("Provider did not return an order ID");
+    const providerId = result && (result.order || result.id);
+
+    if (!providerId) throw new Error("Provider did not return an order ID");
 
     db.prepare(`
-      INSERT INTO orders (user_id,service_id,provider_order_id,link,quantity,charge,status)
-      VALUES (?,?,?,?,?,?,?)
-    `).run(user.id, service.id, String(result.order), link, quantity, charge, "Pending");
+      UPDATE orders SET provider_order_id=?,status='Processing' WHERE id=?
+    `).run(String(providerId), orderId);
 
-    res.redirect("/orders?success=Order%20submitted%20successfully");
+    res.redirect("/orders");
   } catch (error) {
-    db.prepare("UPDATE users SET balance=balance+? WHERE id=?").run(charge, user.id);
-    console.error("Provider order error:", error.message);
-    res.redirect("/new-order?error=Order%20failed.%20Your%20balance%20has%20been%20refunded");
+    db.transaction(() => {
+      db.prepare("UPDATE users SET balance=balance+? WHERE id=?")
+        .run(charge, req.user.id);
+      db.prepare("UPDATE orders SET status='Failed' WHERE id=?")
+        .run(orderId);
+    })();
+
+    res.send(page("New Order", notice("Provider order failed. Your balance has been refunded.", "error"), req.user));
   }
 });
 
 app.get("/orders", requireLogin, (req, res) => {
-  const user = currentUser(req);
   const orders = db.prepare(`
     SELECT o.*,s.name AS service_name
-    FROM orders o LEFT JOIN services s ON s.id=o.service_id
-    WHERE o.user_id=? ORDER BY o.id DESC LIMIT 300
-  `).all(user.id);
+    FROM orders o JOIN services s ON s.id=o.service_id
+    WHERE o.user_id=? ORDER BY o.id DESC LIMIT 200
+  `).all(req.user.id);
 
   const rows = orders.map(o => `
     <tr>
       <td>${o.id}</td>
-      <td>${escapeHtml(o.service_name || "Service")}</td>
+      <td>${esc(o.service_name)}</td>
+      <td>${esc(o.link)}</td>
       <td>${o.quantity}</td>
       <td>${money(o.charge)}</td>
-      <td>${escapeHtml(o.status)}</td>
-      <td>${escapeHtml(o.created_at)}</td>
+      <td>${esc(o.status)}</td>
+      <td>${esc(o.created_at)}</td>
     </tr>
   `).join("");
 
-  res.send(page("My Orders", `
+  res.send(page("Orders", `
     <div class="card">
-      <h1>My Orders</h1>
-      ${messageBox(req)}
+      <h2>Order History</h2>
       <div class="tablewrap"><table>
-      <thead><tr><th>Order</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Date</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6">No orders yet.</td></tr>'}</tbody>
+        <tr><th>ID</th><th>Service</th><th>Link</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Date</th></tr>
+        ${rows || "<tr><td colspan='7'>No orders yet.</td></tr>"}
       </table></div>
     </div>
-  `, user));
+  `, req.user));
 });
 
 app.get("/add-funds", requireLogin, (req, res) => {
-  const user = currentUser(req);
-  const upiId = process.env.UPI_ID || "";
+  const payments = db.prepare(`
+    SELECT * FROM payments WHERE user_id=? ORDER BY id DESC LIMIT 20
+  `).all(req.user.id);
+
+  const rows = payments.map(p => `
+    <tr><td>${p.id}</td><td>${money(p.amount)}</td>
+    <td>${esc(p.reference)}</td><td>${esc(p.status)}</td>
+    <td>${esc(p.created_at)}</td></tr>
+  `).join("");
 
   res.send(page("Add Funds", `
     <div class="card">
-      <h1>Add Funds</h1>
-      ${messageBox(req)}
-      <p>Minimum amount: ₹100</p>
-      <p>Maximum amount: ₹20,000</p>
-      ${upiId ? `<p>UPI ID: <b>${escapeHtml(upiId)}</b></p>` : '<p class="muted">Payment UPI details will be provided by the administrator.</p>'}
-      <p class="muted">After payment, submit your UPI transaction reference. Funds are added only after admin verification. This is manual verification, not automatic payment confirmation.</p>
-      <form method="post" action="/add-funds">
-        <label>Amount (₹)</label><input type="number" name="amount" min="100" max="20000" step="1" required>
-        <label>UPI Transaction Reference</label><input name="reference" maxlength="100" required>
-        <button type="submit">Submit Payment Request</button>
+      <h2>Add Funds</h2>
+      <p>Choose an amount between ₹10 and ₹2,000.</p>
+      <p><b>Current Balance: ${money(req.user.balance)}</b></p>
+      <form method="POST" action="/add-funds">
+        <label>Amount (₹)</label>
+        <input type="number" name="amount" min="10" max="2000" step="1" required>
+        <label>Your Mobile Number</label>
+        <input type="tel" name="phone" pattern="[0-9]{10}" minlength="10" maxlength="10" placeholder="10 digit mobile number" required>
+        <label>UTR / UPI Transaction Reference</label>
+        <input name="reference" maxlength="100" placeholder="Enter UTR after payment" required>
+        <div style="text-align:center;margin:15px 0">
+          <h3>Scan QR to Pay</h3>
+          <img src="/payment-qr.png" alt="Payment QR Code" style="max-width:260px;width:100%;border:1px solid #ddd;padding:8px;border-radius:10px" onerror="this.style.display='none';document.getElementById('qrMissing').style.display='block'">
+          <p id="qrMissing" style="display:none;color:#c00">Payment QR has not been uploaded yet.</p>
+        </div>
+        <button>Submit Payment Request</button>
       </form>
+      <p class="muted">Your balance will be credited after the admin verifies your payment. Submitting a UTR alone does not verify payment automatically.</p>
     </div>
-  `, user));
+    <div class="card">
+      <h3>Payment Requests</h3>
+      <div class="tablewrap"><table>
+        <tr><th>ID</th><th>Amount</th><th>UTR</th><th>Status</th><th>Date</th></tr>
+        ${rows || "<tr><td colspan='5'>No payment requests.</td></tr>"}
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>Need Help?</h3>
+      <a class="btn" href="https://wa.me/918140989426" target="_blank" rel="noopener">WhatsApp Support</a>
+    </div>
+  `, req.user));
 });
 
 app.post("/add-funds", requireLogin, (req, res) => {
-  const user = currentUser(req);
   const amount = Number(req.body.amount);
+  const phone = String(req.body.phone || "").replace(/\D/g, "");
   const reference = String(req.body.reference || "").trim();
 
-  if (!Number.isInteger(amount) || amount < 100 || amount > 20000 ||
-      reference.length < 4 || reference.length > 100) {
-    return res.redirect("/add-funds?error=Please%20enter%20valid%20payment%20details");
+  if (!Number.isInteger(amount) || amount < 10 || amount > 2000) {
+    return res.send(page("Add Funds", notice("Amount must be between ₹10 and ₹2,000.", "error"), req.user));
   }
 
-  db.prepare(
-    "INSERT INTO payments (user_id,amount,reference,status) VALUES (?,?,?,'Pending')"
-  ).run(user.id, amount, reference);
+  if (!/^[0-9]{10}$/.test(phone) || reference.length < 5 || reference.length > 100) {
+    return res.send(page("Add Funds", notice("Enter a valid 10-digit mobile number and UTR.", "error"), req.user));
+  }
 
-  res.redirect("/add-funds?success=Payment%20request%20submitted%20for%20verification");
+  const duplicate = db.prepare(
+    "SELECT id FROM payments WHERE reference=?"
+  ).get(reference);
+
+  if (duplicate) {
+    return res.send(page("Add Funds", notice("This UTR has already been submitted.", "error"), req.user));
+  }
+
+  db.prepare(`
+    INSERT INTO payments (user_id,amount,reference,phone,status)
+    VALUES (?,?,?,?,'Pending')
+  `).run(req.user.id, amount, reference, phone);
+
+  res.send(page("Payment Submitted",
+    notice("Payment request submitted. Admin will verify it before adding balance.") +
+    '<p><a class="btn" href="/add-funds">Back to Add Funds</a></p>',
+    req.user));
 });
 
 app.get("/support", requireLogin, (req, res) => {
-  const user = currentUser(req);
   const tickets = db.prepare(
     "SELECT * FROM tickets WHERE user_id=? ORDER BY id DESC"
-  ).all(user.id);
+  ).all(req.user.id);
 
   const rows = tickets.map(t => `
-    <div class="card">
-      <b>${escapeHtml(t.subject)}</b>
-      <p>${escapeHtml(t.message)}</p>
-      <small>Status: ${escapeHtml(t.status)} | ${escapeHtml(t.created_at)}</small>
-    </div>
+    <tr><td>${t.id}</td><td>${esc(t.subject)}</td>
+    <td>${esc(t.message)}</td><td>${esc(t.status)}</td>
+    <td>${esc(t.created_at)}</td></tr>
   `).join("");
 
   res.send(page("Support", `
     <div class="card">
-      <h1>Support</h1>
-      ${messageBox(req)}
-      <form method="post" action="/support">
-        <label>Subject</label><input name="subject" maxlength="120" required>
-        <label>Message</label><textarea name="message" rows="5" maxlength="3000" required></textarea>
-        <button type="submit">Send Message</button>
+      <h2>Contact Support</h2>
+      <a class="btn" href="https://wa.me/918140989426" target="_blank" rel="noopener">Chat on WhatsApp</a>
+    </div>
+    <div class="card">
+      <h3>Create Support Ticket</h3>
+      <form method="POST" action="/support">
+        <input name="subject" placeholder="Subject" maxlength="120" required>
+        <textarea name="message" placeholder="Write your message..." rows="5" maxlength="2000" required></textarea>
+        <button>Submit Ticket</button>
       </form>
     </div>
-    <h2>My Tickets</h2>${rows || '<div class="card">No support tickets yet.</div>'}
-  `, user));
+    <div class="card">
+      <h3>Your Tickets</h3>
+      <div class="tablewrap"><table>
+        <tr><th>ID</th><th>Subject</th><th>Message</th><th>Status</th><th>Date</th></tr>
+        ${rows || "<tr><td colspan='5'>No tickets yet.</td></tr>"}
+      </table></div>
+    </div>
+  `, req.user));
 });
 
 app.post("/support", requireLogin, (req, res) => {
-  const user = currentUser(req);
   const subject = String(req.body.subject || "").trim();
   const message = String(req.body.message || "").trim();
 
-  if (!subject || !message || subject.length > 120 || message.length > 3000) {
-    return res.redirect("/support?error=Please%20enter%20a%20valid%20message");
+  if (!subject || !message) {
+    return res.send(page("Support", notice("Please fill all fields.", "error"), req.user));
   }
 
-  db.prepare(
-    "INSERT INTO tickets (user_id,subject,message) VALUES (?,?,?)"
-  ).run(user.id, subject, message);
+  db.prepare(`
+    INSERT INTO tickets (user_id,subject,message) VALUES (?,?,?)
+  `).run(req.user.id, subject.slice(0, 120), message.slice(0, 2000));
 
-  res.redirect("/support?success=Support%20message%20sent");
+  res.redirect("/support");
 });
 
-app.get("/admin", requireLogin, requireAdmin, (req, res) => {
-  const user = currentUser(req);
-  const users = db.prepare("SELECT id,email,balance,is_admin,created_at FROM users ORDER BY id DESC LIMIT 100").all();
-  const payments = db.prepare(`
-    SELECT p.*,u.email FROM payments p JOIN users u ON u.id=p.user_id
-    ORDER BY p.id DESC LIMIT 100
-  `).all();
-  const serviceCount = db.prepare("SELECT COUNT(*) AS n FROM services WHERE active=1").get().n;
-  const orderCount = db.prepare("SELECT COUNT(*) AS n FROM orders").get().n;
-
-  const userRows = users.map(u => `
-    <tr><td>${u.id}</td><td>${escapeHtml(u.email)}</td><td>${money(u.balance)}</td><td>${u.is_admin ? "Admin" : "User"}</td></tr>
-  `).join("");
-
-  const paymentRows = payments.map(p => `
-    <tr>
-      <td>${p.id}</td><td>${escapeHtml(p.email)}</td><td>${money(p.amount)}</td>
-      <td>${escapeHtml(p.reference || "")}</td><td>${escapeHtml(p.status)}</td>
-      <td>${p.status === "Pending" ? `
-        <form method="post" action="/admin/payment/${p.id}/approve"><button>Approve</button></form>
-        <form method="post" action="/admin/payment/${p.id}/reject"><button style="background:#555">Reject</button></form>
-      ` : "-"}</td>
-    </tr>
-  `).join("");
+app.get("/admin", requireAdmin, (req, res) => {
+  const users = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+  const orders = db.prepare("SELECT COUNT(*) AS n FROM orders").get().n;
+  const pending = db.prepare(
+    "SELECT COUNT(*) AS n FROM payments WHERE status='Pending'"
+  ).get().n;
 
   res.send(page("Admin", `
-    <h1>Admin Panel</h1>
-    ${messageBox(req)}
-    <div class="grid">
-      <div class="card"><p class="muted">Active Services</p><div class="stat">${serviceCount}</div></div>
-      <div class="card"><p class="muted">Total Orders</p><div class="stat">${orderCount}</div></div>
-    </div>
     <div class="card">
-      <h2>Provider Services</h2>
-      <form method="post" action="/admin/sync"><button>Sync Services From Provider</button></form>
-      <p class="muted">This imports or updates services from your configured SMM provider.</p>
+      <h2>Admin Panel</h2>
+      <div class="grid">
+        <div class="card"><div class="muted">Users</div><div class="big">${users}</div></div>
+        <div class="card"><div class="muted">Orders</div><div class="big">${orders}</div></div>
+        <div class="card"><div class="muted">Pending Payments</div><div class="big">${pending}</div></div>
+      </div>
+      <p><a class="btn" href="/admin/payments">Payment Requests</a></p>
+      <p><a class="btn" href="/admin/orders">All Orders</a></p>
+      <form method="POST" action="/admin/sync-services">
+        <button>Sync VIP Pro Services</button>
+      </form>
     </div>
-    <div class="card">
-      <h2>Payment Requests</h2>
-      <div class="tablewrap"><table>
-      <thead><tr><th>ID</th><th>User</th><th>Amount</th><th>Reference</th><th>Status</th><th>Action</th></tr></thead>
-      <tbody>${paymentRows || '<tr><td colspan="6">No payment requests.</td></tr>'}</tbody>
-      </table></div>
-    </div>
-    <div class="card">
-      <h2>Users</h2>
-      <div class="tablewrap"><table>
-      <thead><tr><th>ID</th><th>Email</th><th>Balance</th><th>Role</th></tr></thead>
-      <tbody>${userRows}</tbody>
-      </table></div>
-    </div>
-  `, user));
+  `, req.user));
 });
 
-app.post("/admin/sync", requireLogin, requireAdmin, async (req, res) => {
+app.post("/admin/sync-services", requireAdmin, async (req, res) => {
   try {
-    const services = await providerServices();
-    const upsert = db.prepare(`
-      INSERT INTO services (provider_id,name,category,rate,min_qty,max_qty,description,active)
-      VALUES (@provider_id,@name,@category,@rate,@min_qty,@max_qty,@description,1)
+    const response = await providerServices();
+    const list = Array.isArray(response) ? response :
+      (response && Array.isArray(response.services) ? response.services : []);
+
+    const insert = db.prepare(`
+      INSERT INTO services
+      (provider_id,name,category,rate,min,max,description,active)
+      VALUES (@provider_id,@name,@category,@rate,@min,@max,@description,1)
       ON CONFLICT(provider_id) DO UPDATE SET
         name=excluded.name,
         category=excluded.category,
         rate=excluded.rate,
-        min_qty=excluded.min_qty,
-        max_qty=excluded.max_qty,
+        min=excluded.min,
+        max=excluded.max,
         description=excluded.description,
         active=1
     `);
 
     const sync = db.transaction(items => {
-      for (const s of items) {
-        if (!s || s.service === undefined || !s.name) continue;
-        const rate = Number(s.rate);
-        const min = Math.max(1, Number(s.min) || 1);
-        const max = Math.max(min, Number(s.max) || 100000);
-
-        upsert.run({
-          provider_id: String(s.service),
-          name: String(s.name),
-          category: String(s.category || "Other"),
-          rate: Number.isFinite(rate) ? rate : 0,
-          min_qty: min,
-          max_qty: max,
-          description: String(s.desc || "")
+      for (const item of items) {
+        if (!item || item.service == null || !item.name) continue;
+        insert.run({
+          provider_id: String(item.service),
+          name: String(item.name),
+          category: String(item.category || "Other"),
+          rate: Number(item.rate || 0),
+          min: Number(item.min || 1),
+          max: Number(item.max || 1000000),
+          description: String(item.description || "")
         });
       }
     });
 
-    sync(services);
-    res.redirect("/admin?success=Provider%20services%20synced");
+    sync(list);
+    res.send(page("Services Synced",
+      notice("Service sync completed. Imported " + list.length + " provider services.") +
+      '<p><a class="btn" href="/admin">Back to Admin</a></p>', req.user));
   } catch (error) {
-    console.error("Service sync error:", error.message);
-    res.redirect("/admin?error=Provider%20sync%20failed.%20Check%20API%20settings");
+    console.error("Service sync error:", error);
+    res.send(page("Sync Error",
+      notice("Service sync failed. Check VIP Pro API settings and server logs.", "error") +
+      '<p><a href="/admin">Back to Admin</a></p>', req.user));
   }
 });
 
-app.post("/admin/payment/:id/approve", requireLogin, requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const approve = db.transaction(() => {
-    const payment = db.prepare("SELECT * FROM payments WHERE id=?").get(id);
-    if (!payment || payment.status !== "Pending") return false;
+app.get("/admin/payments", requireAdmin, (req, res) => {
+  const payments = db.prepare(`
+    SELECT p.*,u.name,u.email
+    FROM payments p JOIN users u ON u.id=p.user_id
+    ORDER BY p.id DESC LIMIT 300
+  `).all();
 
-    db.prepare("UPDATE payments SET status='Approved' WHERE id=?").run(id);
-    db.prepare("UPDATE users SET balance=balance+? WHERE id=?").run(payment.amount, payment.user_id);
-    return true;
-  });
+  const rows = payments.map(p => `
+    <tr>
+      <td>${p.id}</td><td>${esc(p.name)}<br>${esc(p.email)}</td>
+      <td>${money(p.amount)}</td><td>${esc(p.phone || "")}</td>
+      <td>${esc(p.reference)}</td><td>${esc(p.status)}</td>
+      <td>${p.status === "Pending" ? `
+        <form method="POST" action="/admin/payments/${p.id}/approve" style="display:inline">
+          <button>Approve</button>
+        </form>
+        <form method="POST" action="/admin/payments/${p.id}/reject" style="display:inline">
+          <button style="background:#555">Reject</button>
+        </form>` : "-"}
+      </td>
+    </tr>
+  `).join("");
 
-  const result = approve();
-  res.redirect("/admin?" + (result ? "success=Payment%20approved" : "error=Payment%20already%20processed"));
-});
-
-app.post("/admin/payment/:id/reject", requireLogin, requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const result = db.prepare(
-    "UPDATE payments SET status='Rejected' WHERE id=? AND status='Pending'"
-  ).run(id);
-
-  res.redirect("/admin?" + (result.changes ? "success=Payment%20request%20rejected" : "error=Payment%20already%20processed"));
-});
-
-app.get("/terms", (req, res) => {
-  res.send(page("Terms", `
+  res.send(page("Payment Requests", `
     <div class="card">
-      <h1>Terms and Conditions</h1>
-      <p>Orders are processed according to the selected service details and provider availability.</p>
-      <p>Payment requests require administrator verification.</p>
-      <p>Users must submit correct links and quantities when placing orders.</p>
+      <h2>Payment Requests</h2>
+      <p>Verify the actual payment in your payment app/bank before approving.</p>
+      <div class="tablewrap"><table>
+        <tr><th>ID</th><th>User</th><th>Amount</th><th>Phone</th><th>UTR</th><th>Status</th><th>Action</th></tr>
+        ${rows || "<tr><td colspan='7'>No payments.</td></tr>"}
+      </table></div>
     </div>
-  `, currentUser(req)));
+  `, req.user));
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", app: "PanelAdminSMM.shop" });
+app.post("/admin/payments/:id/approve", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    const approve = db.transaction(() => {
+      const payment = db.prepare(
+        "SELECT * FROM payments WHERE id=?"
+      ).get(id);
+
+      if (!payment || payment.status !== "Pending") {
+        throw new Error("Payment is not pending.");
+      }
+
+      db.prepare(
+        "UPDATE payments SET status='Approved',approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='Pending'"
+      ).run(id);
+
+      db.prepare(
+        "UPDATE users SET balance=balance+? WHERE id=?"
+      ).run(payment.amount, payment.user_id);
+    });
+
+    approve();
+    res.redirect("/admin/payments");
+  } catch (error) {
+    res.send(page("Payment Error", notice(error.message, "error"), req.user));
+  }
+});
+
+app.post("/admin/payments/:id/reject", requireAdmin, (req, res) => {
+  db.prepare(`
+    UPDATE payments SET status='Rejected'
+    WHERE id=? AND status='Pending'
+  `).run(Number(req.params.id));
+
+  res.redirect("/admin/payments");
+});
+
+app.get("/admin/orders", requireAdmin, (req, res) => {
+  const orders = db.prepare(`
+    SELECT o.*,u.email,s.name AS service_name
+    FROM orders o
+    JOIN users u ON u.id=o.user_id
+    JOIN services s ON s.id=o.service_id
+    ORDER BY o.id DESC LIMIT 300
+  `).all();
+
+  const rows = orders.map(o => `
+    <tr><td>${o.id}</td><td>${esc(o.email)}</td>
+    <td>${esc(o.service_name)}</td><td>${o.quantity}</td>
+    <td>${money(o.charge)}</td><td>${esc(o.provider_order_id || "")}</td>
+    <td>${esc(o.status)}</td></tr>
+  `).join("");
+
+  res.send(page("All Orders", `
+    <div class="card">
+      <h2>All Orders</h2>
+      <div class="tablewrap"><table>
+        <tr><th>ID</th><th>User</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Provider ID</th><th>Status</th></tr>
+        ${rows || "<tr><td colspan='7'>No orders.</td></tr>"}
+      </table></div>
+    </div>
+  `, req.user));
+});
+
+app.get("/order-status/:id", requireLogin, async (req, res) => {
+  const order = db.prepare(`
+    SELECT * FROM orders WHERE id=? AND user_id=?
+  `).get(Number(req.params.id), req.user.id);
+
+  if (!order) return res.status(404).send("Order not found");
+
+  if (!order.provider_order_id) {
+    return res.send("Provider order ID not available.");
+  }
+
+  try {
+    const result = await providerOrderStatus(order.provider_order_id);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: "Unable to fetch provider status" });
+  }
 });
 
 app.use((req, res) => {
-  res.status(404).send(page("Not Found", `
-    <div class="card"><h1>404</h1><p>Page not found.</p><a href="/">Go Home</a></div>
-  `, currentUser(req)));
+  res.status(404).send(page("Not Found",
+    '<div class="card"><h2>Page not found</h2><a href="/">Home</a></div>',
+    currentUser(req)));
 });
 
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
-  res.status(500).send(page("Server Error", `
-    <div class="card"><h1>Something went wrong</h1><p>Please try again later.</p></div>
-  `, currentUser(req)));
+  res.status(500).send(page("Server Error",
+    '<div class="card"><h2>Something went wrong</h2><p>Please try again later.</p></div>',
+    currentUser(req)));
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`PanelAdminSMM.shop running on port ${PORT}`);
+  console.log("PanelAdminSMM.shop running on port " + PORT);
 });
