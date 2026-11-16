@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -755,3 +754,4 @@ start().catch(err => {
   console.error("Server startup failed:", err);
   process.exit(1);
 });
+
