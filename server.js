@@ -309,8 +309,168 @@ app.get("/dashboard", requireLogin, async (req, res) => {
   </div>`, req.session.user));
 });
 
+
 app.get("/services", requireLogin, async (req, res) => {
-  const q = String(req.query.search || "").slice(0, 100);
+  try {
+    const search = String(req.query.search || "").trim().slice(0, 100);
+    const selected = String(req.query.platform || "All").trim();
+
+    const result = await db(`
+      SELECT * FROM services
+      WHERE active = TRUE
+      ORDER BY name ASC
+      LIMIT 2000
+    `);
+
+    const platforms = [
+      { name: "All", logo: "🌐", color: "#555" },
+      { name: "Instagram", logo: "📸", color: "#d62976" },
+      { name: "Facebook", logo: "f", color: "#1877f2" },
+      { name: "YouTube", logo: "▶", color: "#ff0000" },
+      { name: "TikTok", logo: "♪", color: "#111111" },
+      { name: "Telegram", logo: "✈", color: "#229ed9" },
+      { name: "WhatsApp", logo: "☎", color: "#25d366" },
+      { name: "Twitter", logo: "𝕏", color: "#333333" },
+      { name: "Other", logo: "▦", color: "#666666" }
+    ];
+
+    function getPlatform(service) {
+      const text = (
+        String(service.category || "") + " " +
+        String(service.name || "")
+      ).toLowerCase();
+
+      if (/instagram|insta\b/.test(text)) return "Instagram";
+      if (/facebook|fb\b/.test(text)) return "Facebook";
+      if (/youtube|youtu\.be/.test(text)) return "YouTube";
+      if (/tiktok|tik tok/.test(text)) return "TikTok";
+      if (/telegram/.test(text)) return "Telegram";
+      if (/whatsapp|wa\b/.test(text)) return "WhatsApp";
+      if (/twitter|\bx\b/.test(text)) return "Twitter";
+
+      return "Other";
+    }
+
+    let services = result.rows.map(s => ({
+      ...s,
+      platform: getPlatform(s)
+    }));
+
+    // Search all platforms together
+    if (search) {
+      const term = search.toLowerCase();
+
+      services = services.filter(s =>
+        String(s.name || "").toLowerCase().includes(term) ||
+        String(s.category || "").toLowerCase().includes(term) ||
+        String(s.description || "").toLowerCase().includes(term) ||
+        String(s.id).includes(term)
+      );
+    } else if (selected !== "All") {
+      services = services.filter(s => s.platform === selected);
+    }
+
+    const counts = {};
+    for (const p of platforms) {
+      counts[p.name] = p.name === "All"
+        ? result.rows.length
+        : result.rows.filter(s => getPlatform(s) === p.name).length;
+    }
+
+    const buttons = platforms.map(p => {
+      const active = selected === p.name && !search;
+      const url = p.name === "All"
+        ? "/services"
+        : "/services?platform=" + encodeURIComponent(p.name);
+
+      return `
+        <a href="${url}" style="
+          display:inline-flex;
+          align-items:center;
+          gap:8px;
+          background:${active ? p.color : "#292929"};
+          color:white;
+          border:1px solid ${p.color};
+          border-radius:10px;
+          padding:12px;
+          margin:4px;
+          text-decoration:none;
+          font-weight:bold;
+        ">
+          <span style="font-size:20px">${p.logo}</span>
+          <span>${p.name}</span>
+          <small style="color:white">(${counts[p.name]})</small>
+        </a>
+      `;
+    }).join("");
+
+    const rows = services.map(s => `
+      <tr>
+        <td>${s.id}</td>
+        <td>${escapeHtml(s.name)}</td>
+        <td>${escapeHtml(s.platform)}</td>
+        <td>₹${Number(s.rate).toFixed(2)}</td>
+        <td>${s.min} - ${s.max}</td>
+        <td>
+          <a href="/new-order" style="
+            background:#e00000;
+            color:white;
+            padding:7px 10px;
+            border-radius:6px;
+          ">Order</a>
+        </td>
+      </tr>
+    `).join("");
+
+    res.send(page("Services", `
+      <div class="card">
+        <h2>🌐 All Social Media Services</h2>
+
+        <form method="GET" action="/services">
+          <input
+            name="search"
+            value="${escapeHtml(search)}"
+            placeholder="🔍 Search any service from all platforms..."
+          >
+          <button type="submit">Search All Services</button>
+          <a href="/services" style="margin-left:10px">Clear</a>
+        </form>
+
+        <h3 style="color:#ff5555">Choose Platform</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          ${buttons}
+        </div>
+
+        <hr style="border-color:#444;margin:20px 0">
+
+        <h3>Available Services (${services.length})</h3>
+
+        <div style="overflow-x:auto">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>Service</th>
+              <th>Platform</th>
+              <th>Rate / 1000</th>
+              <th>Min / Max</th>
+              <th>Order</th>
+            </tr>
+            ${rows || `
+              <tr>
+                <td colspan="6">No services found.</td>
+              </tr>
+            `}
+          </table>
+        </div>
+      </div>
+    `, req.session.user));
+
+  } catch (error) {
+    console.error("Services page error:", error);
+    res.status(500).send("Unable to load services. Please try again.");
+  }
+});
+
 
   const result = await db(`
     SELECT * FROM services
