@@ -471,36 +471,6 @@ app.get("/services", requireLogin, async (req, res) => {
   }
 });
 
-
-  const result = await db(`
-    SELECT * FROM services
-    WHERE active=TRUE AND
-    (name ILIKE $1 OR category ILIKE $1)
-    ORDER BY id DESC LIMIT 300
-  `, [`%${q}%`]);
-
-  let rows = result.rows.map(s => `
-    <tr>
-    <td>${s.id}</td>
-    <td>${escapeHtml(s.name)}</td>
-    <td>${escapeHtml(s.category)}</td>
-    <td>₹${Number(s.rate).toFixed(2)}</td>
-    <td>${s.min} - ${s.max}</td>
-    </tr>`).join("");
-
-  res.send(page("Services", `
-  <div class="card">
-  <h2>Available Services</h2>
-  <form method="GET">
-  <input name="search" placeholder="Search Services">
-  <button>Search</button>
-  </form>
-  <table><tr><th>ID</th><th>Service</th><th>Category</th><th>Rate</th><th>Min/Max</th></tr>
-  ${rows || "<tr><td colspan='5'>No services available. Admin needs to sync services.</td></tr>"}
-  </table>
-  </div>`, req.session.user));
-});
-
 app.get("/new-order", requireLogin, async (req, res) => {
   const services = await db("SELECT * FROM services WHERE active=TRUE ORDER BY name");
 
