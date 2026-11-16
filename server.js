@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -7,28 +6,25 @@ const bcrypt = require("bcryptjs");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
+const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-if (!process.env.DATABASE_URL || !process.env.SESSION_SECRET) {
-  throw new Error("DATABASE_URL and SESSION_SECRET are required");
-}
-
-const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 10
-});
 
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false }
+    : false
+});
 
 app.use(session({
-  name: "royal_smm_session",
-  secret: process.env.SESSION_SECRET,
+  secret: process.env.SESSION_SECRET || "change-this-secret-before-production",
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -41,123 +37,109 @@ app.use(session({
 
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 200,
-  standardHeaders: "draft-7",
-  legacyHeaders: false
+  limit: 200
 }));
 
-const categories = [
-  { name: "Instagram", icon: "📸" },
-  { name: "Facebook", icon: "🔵" },
-  { name: "YouTube", icon: "▶️" },
-  { name: "TikTok", icon: "🎵" },
-  { name: "Telegram", icon: "✈️" },
-  { name: "WhatsApp", icon: "💬" },
-  { name: "Twitter", icon: "𝕏" }
-];
+const PORT = process.env.PORT || 3000;
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const UPI_ID = process.env.UPI_ID || "gujaratiasfak806@okhdfcbank";
+const WHATSAPP = process.env.SUPPORT_WHATSAPP || "918140989426";
 
-const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;"
-}[c]));
+let provider = {};
 
-const money = n => "₹" + Number(n || 0).toFixed(2);
-
-function auth(req, res, next) {
-  if (!req.session.user) return res.redirect("/login");
-  next();
+try {
+  provider = require("./src/provider");
+} catch (e) {
+  console.log("Provider module not configured:", e.message);
 }
 
-function admin(req, res, next) {
-  if (!req.session.user || req.session.user.role !== "admin") {
-    return res.status(403).send("Admin access required");
-  }
-  next();
+const {
+  providerServices,
+  providerAddOrder,
+  providerOrderStatus
+} = provider;
+
+async function db(sql, params = []) {
+  return pool.query(sql, params);
 }
 
-// Existing database is preserved.
-// These CREATE statements only create missing tables;
-// they do not replace existing tables or their data.
-async function initDB() {
-  await db.query(`
+async function setupDatabase() {
+  await db(`
     CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      email VARCHAR(255) UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      balance NUMERIC(12,2) DEFAULT 0,
-      role VARCHAR(50) DEFAULT 'user',
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      balance NUMERIC(14,2) DEFAULT 0,
+      is_admin BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    )
+  `);
 
+  await db(`
     CREATE TABLE IF NOT EXISTS services (
       id SERIAL PRIMARY KEY,
-      provider_id TEXT,
+      provider_id TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
-      category TEXT NOT NULL,
-      rate NUMERIC(12,2) DEFAULT 0,
-      min INTEGER DEFAULT 100,
+      category TEXT DEFAULT 'Other',
+      rate NUMERIC(14,4) DEFAULT 0,
+      min INTEGER DEFAULT 1,
       max INTEGER DEFAULT 100000,
       description TEXT DEFAULT '',
       active BOOLEAN DEFAULT TRUE,
       updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    )
+  `);
 
+  await db(`
     CREATE TABLE IF NOT EXISTS orders (
       id SERIAL PRIMARY KEY,
-      user_id BIGINT REFERENCES users(id),
+      user_id INTEGER REFERENCES users(id),
       service_id INTEGER REFERENCES services(id),
       provider_order_id TEXT,
       link TEXT NOT NULL,
       quantity INTEGER NOT NULL,
-      charge NUMERIC(12,2) NOT NULL,
+      charge NUMERIC(14,2) NOT NULL,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    )
+  `);
 
+  await db(`
     CREATE TABLE IF NOT EXISTS payments (
       id SERIAL PRIMARY KEY,
-      user_id BIGINT REFERENCES users(id),
-      amount NUMERIC(12,2) NOT NULL,
+      user_id INTEGER REFERENCES users(id),
+      amount NUMERIC(14,2) NOT NULL,
       utr TEXT NOT NULL,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    )
+  `);
 
+  await db(`
     CREATE TABLE IF NOT EXISTS tickets (
       id SERIAL PRIMARY KEY,
-      user_id BIGINT REFERENCES users(id),
+      user_id INTEGER REFERENCES users(id),
       message TEXT NOT NULL,
       status TEXT DEFAULT 'Open',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    )
   `);
 
-  // Promote the configured admin without changing an existing password.
-  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-    const email = process.env.ADMIN_EMAIL.toLowerCase().trim();
+  if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+    const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
 
-    const existing = await db.query(
-      "SELECT id FROM users WHERE LOWER(email)=$1 LIMIT 1",
-      [email]
-    );
-
-    if (existing.rows.length) {
-      await db.query(
-        "UPDATE users SET role='admin' WHERE id=$1",
-        [existing.rows[0].id]
-      );
-    } else {
-      const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
-      await db.query(
-        "INSERT INTO users(name,email,password,role) VALUES($1,$2,$3,$4)",
-        ["Administrator", email, hash, "admin"]
-      );
-    }
+    await db(`
+      INSERT INTO users
+      (username, email, password_hash, is_admin)
+      VALUES ($1, $2, $3, TRUE)
+      ON CONFLICT (email)
+      DO UPDATE SET is_admin = TRUE
+    `, ["admin", ADMIN_EMAIL, hash]);
   }
+
+  console.log("Database ready");
 }
 
 function page(title, content, user = null) {
@@ -166,751 +148,632 @@ function page(title, content, user = null) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} | SMM.com</title>
+<title>${title} - PanelAdminSMM.shop</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#f3f5fa;color:#202438;font-family:Arial,sans-serif}
-header{background:#111827;color:white;padding:17px 5%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.logo{font-size:25px;font-weight:900;color:#ff354d}
-header a{color:white;text-decoration:none;margin:5px;font-size:14px}
-.container{max-width:1100px;margin:25px auto;padding:0 15px}
-.card{background:white;padding:20px;border-radius:14px;margin-bottom:17px;box-shadow:0 3px 15px #00000008}
-h2{margin-top:0}
-input,select,textarea{width:100%;padding:13px;border:1px solid #ddd;border-radius:9px;margin:8px 0 15px;font-size:15px}
-button,.btn{background:#e92e48;color:white;border:0;border-radius:9px;padding:12px 18px;cursor:pointer;text-decoration:none;display:inline-block}
-button:hover,.btn:hover{opacity:.85}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-.category{background:white;padding:19px 8px;border-radius:13px;text-align:center;border:2px solid #eee;cursor:pointer;display:block;text-decoration:none;color:inherit;transition:.2s}
-.category:hover{border-color:#e92e48;transform:translateY(-2px)}
-.category .icon{font-size:34px;display:block;margin-bottom:9px}
-.category strong{font-size:15px}
-.service{padding:15px;border:1px solid #eee;border-radius:10px;margin:10px 0;background:white}
-.service h3{margin:0 0 8px}
-.small{color:#777;font-size:13px}
-table{width:100%;border-collapse:collapse;background:white;display:block;overflow-x:auto}
-td,th{padding:11px;border-bottom:1px solid #eee;text-align:left;font-size:13px}
-.red{color:#e92e48;font-weight:bold}
-.notice{background:#fff4dc;padding:13px;border-radius:9px;margin:12px 0}
-.back{display:inline-block;margin-bottom:14px;color:#e92e48;text-decoration:none;font-weight:bold}
-.platform-title{display:flex;align-items:center;gap:10px}
-.platform-title span{font-size:32px}
-.search-box input{padding:15px;border:2px solid #e5e7eb}
-.search-box input:focus{outline:none;border-color:#e92e48}
-@media(max-width:600px){
-header{padding:14px}
-.container{margin:15px auto}
-.card{padding:15px}
-.grid{grid-template-columns:repeat(2,1fr)}
-}
+body{margin:0;background:#101010;color:white;font-family:Arial,sans-serif}
+header{background:#191919;padding:18px;border-bottom:2px solid #e00000}
+header h2{margin:0;color:#ff2929}
+nav{padding:15px;background:#202020;display:flex;gap:12px;flex-wrap:wrap}
+a{color:#ff5555;text-decoration:none}
+main{max-width:950px;margin:25px auto;padding:15px}
+.card{background:#202020;padding:20px;border-radius:12px;margin-bottom:18px}
+input,select,textarea{width:100%;padding:13px;margin:8px 0;background:#111;color:white;border:1px solid #555;border-radius:7px}
+button{background:#e00000;color:white;padding:12px 20px;border:0;border-radius:7px;cursor:pointer;font-weight:bold}
+table{width:100%;border-collapse:collapse}
+td,th{padding:10px;border-bottom:1px solid #444;text-align:left}
+small{color:#aaa}
+h2{color:#ff4242}
 </style>
 </head>
 <body>
-<header>
-<div class="logo">ROYAL PANEL</div>
-<nav>
-${user ? `
+<header><h2>ROYAL PANEL</h2><small>PanelAdminSMM.shop</small></header>
+${user ? `<nav>
 <a href="/dashboard">Dashboard</a>
 <a href="/services">Services</a>
 <a href="/new-order">New Order</a>
 <a href="/orders">My Orders</a>
 <a href="/add-funds">Add Funds</a>
 <a href="/support">Support</a>
-${user.role === "admin" ? '<a href="/admin">Admin Panel</a>' : ''}
+${user.is_admin ? '<a href="/admin">Admin Panel</a>' : ''}
 <a href="/logout">Logout</a>
-` : '<a href="/login">Login</a><a href="/register">Register</a>'}
-</nav>
-</header>
-<div class="container">${content}</div>
-</body></html>`;
+</nav>` : ""}
+<main>${content}</main>
+</body>
+</html>`;
 }
 
-function sendPage(res, title, content, user = null) {
-  res.send(page(title, content, user));
+function requireLogin(req, res, next) {
+  if (!req.session.user) return res.redirect("/login");
+  next();
 }
 
-// HOME
+function requireAdmin(req, res, next) {
+  if (!req.session.user || !req.session.user.is_admin) {
+    return res.status(403).send("Admin access required");
+  }
+  next();
+}
+
+function message(res, text, user = null) {
+  res.send(page("Message", `<div class="card">${text}<p><a href="/dashboard">Go Dashboard</a></p></div>`, user));
+}
+
 app.get("/", (req, res) => {
-  if (req.session.user) return res.redirect("/dashboard");
-
-  sendPage(res, "Welcome", `
-  <div class="card" style="text-align:center;padding:45px 15px">
-    <h1>Welcome to <span class="red">ROYAL PANEL</span></h1>
-    <p>Social Media Services Management Panel</p>
-    <a class="btn" href="/register">Create Account</a>
-    <a class="btn" href="/login">Login</a>
-  </div>`);
+  res.send(page("Home", `
+  <div class="card">
+  <h1>Welcome to PanelAdminSMM.shop</h1>
+  <p>Your Social Media Marketing Panel</p>
+  <a href="/register"><button>Create Account</button></a>
+  <a href="/login"><button>Login</button></a>
+  </div>`));
 });
 
-// REGISTER
 app.get("/register", (req, res) => {
-  sendPage(res, "Register", `
+  res.send(page("Register", `
   <div class="card">
   <h2>Create Account</h2>
-  <form method="POST" action="/register">
-  <input name="name" placeholder="Full Name" required maxlength="80">
-  <input name="email" type="email" placeholder="Email Address" required>
-  <input name="password" type="password" placeholder="Password (minimum 8 characters)" minlength="8" required>
+  <form method="POST">
+  <input name="username" placeholder="Username" required minlength="3">
+  <input name="email" type="email" placeholder="Email" required>
+  <input name="password" type="password" placeholder="Password" required minlength="8">
   <button>Create Account</button>
   </form>
   <a href="/login">Already have an account? Login</a>
-  </div>`);
+  </div>`));
 });
 
 app.post("/register", async (req, res) => {
   try {
-    const name = String(req.body.name || "").trim();
+    const username = String(req.body.username || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
 
-    if (!name || !email || password.length < 8) {
-      return res.status(400).send("Please enter valid details and an 8-character password.");
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username) ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        password.length < 8) {
+      return message(res, "Please enter valid registration details.");
     }
 
     const hash = await bcrypt.hash(password, 12);
 
-    await db.query(
-      "INSERT INTO users(name,email,password) VALUES($1,$2,$3)",
-      [name, email, hash]
-    );
+    const result = await db(`
+      INSERT INTO users(username,email,password_hash)
+      VALUES($1,$2,$3) RETURNING id,username,email,balance,is_admin
+    `, [username, email, hash]);
 
-    res.redirect("/login");
+    req.session.user = result.rows[0];
+    res.redirect("/dashboard");
   } catch (e) {
-    console.error("Registration error:", e);
-    res.status(400).send("Registration failed. Email may already exist.");
+    message(res, "Account already exists or registration failed.");
   }
 });
 
-// LOGIN
 app.get("/login", (req, res) => {
-  sendPage(res, "Login", `
+  res.send(page("Login", `
   <div class="card">
-  <h2>Account Login</h2>
-  <form method="POST" action="/login">
+  <h2>Login</h2>
+  <form method="POST">
   <input name="email" type="email" placeholder="Email" required>
   <input name="password" type="password" placeholder="Password" required>
   <button>Login</button>
   </form>
   <a href="/register">Create New Account</a>
-  </div>`);
+  </div>`));
 });
 
 app.post("/login", async (req, res) => {
   try {
     const email = String(req.body.email || "").trim().toLowerCase();
+    const result = await db("SELECT * FROM users WHERE email=$1", [email]);
 
-    const result = await db.query(
-      "SELECT * FROM users WHERE LOWER(email)=$1 LIMIT 1",
-      [email]
-    );
-
-    const user = result.rows[0];
-
-    if (!user || !(await bcrypt.compare(String(req.body.password || ""), user.password))) {
-      return res.status(401).send("Incorrect email or password. <a href='/login'>Try again</a>");
+    if (!result.rows.length ||
+        !await bcrypt.compare(String(req.body.password || ""), result.rows[0].password_hash)) {
+      return message(res, "Incorrect email or password.");
     }
+
+    const u = result.rows[0];
 
     req.session.regenerate(err => {
       if (err) return res.status(500).send("Session error");
-
       req.session.user = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        balance: u.balance,
+        is_admin: u.is_admin
       };
-
       res.redirect("/dashboard");
     });
   } catch (e) {
-    console.error("Login error:", e);
-    res.status(500).send("Login error");
+    message(res, "Login failed.");
   }
 });
 
-// LOGOUT
 app.get("/logout", (req, res) => {
-  req.session.destroy(() => res.redirect("/login"));
+  req.session.destroy(() => res.redirect("/"));
 });
 
-// DASHBOARD
-app.get("/dashboard", auth, async (req, res) => {
-  const user = req.session.user;
+app.get("/dashboard", requireLogin, async (req, res) => {
+  const u = await db("SELECT * FROM users WHERE id=$1", [req.session.user.id]);
+  const orders = await db("SELECT COUNT(*) FROM orders WHERE user_id=$1", [req.session.user.id]);
 
-  try {
-    const [balance, orders, services] = await Promise.all([
-      db.query("SELECT balance FROM users WHERE id=$1", [user.id]),
-      db.query("SELECT COUNT(*) FROM orders WHERE user_id=$1", [user.id]),
-      db.query("SELECT COUNT(*) FROM services WHERE active=TRUE")
-    ]);
-
-    sendPage(res, "Dashboard", `
-    <div class="card">
-      <h2>Welcome, ${esc(user.name)} 👋</h2>
-      <p>Account: ${esc(user.email)}</p>
-    </div>
-    <div class="grid">
-      <div class="card"><p>Available Balance</p><h2 class="red">${money(balance.rows[0].balance)}</h2></div>
-      <div class="card"><p>Total Orders</p><h2>${orders.rows[0].count}</h2></div>
-      <div class="card"><p>Available Services</p><h2>${services.rows[0].count}</h2></div>
-    </div>
-    <div class="card">
-      <h2>Quick Actions</h2>
-      <a class="btn" href="/new-order">New Order</a>
-      <a class="btn" href="/orders">Order History</a>
-      <a class="btn" href="/add-funds">Add Funds</a>
-    </div>
-    `, user);
-  } catch (e) {
-    console.error("Dashboard error:", e);
-    res.status(500).send("Dashboard error");
-  }
+  res.send(page("Dashboard", `
+  <div class="card">
+  <h2>Welcome ${req.session.user.username}</h2>
+  <h1>₹${Number(u.rows[0].balance).toFixed(2)}</h1>
+  <p>Available Wallet Balance</p>
+  <p>Total Orders: ${orders.rows[0].count}</p>
+  <a href="/services"><button>View Services</button></a>
+  <a href="/add-funds"><button>Add Funds</button></a>
+  </div>`, req.session.user));
 });
 
-// SERVICES
-app.get("/services", auth, async (req, res) => {
-  try {
-    const selected = String(req.query.category || "").trim();
-    const search = String(req.query.search || "").trim();
 
-    const result = await db.query(`
+app.get("/services", requireLogin, async (req, res) => {
+  try {
+    const search = String(req.query.search || "").trim().slice(0, 100);
+    const selected = String(req.query.platform || "All").trim();
+
+    const result = await db(`
       SELECT * FROM services
-      WHERE active=TRUE
-      AND ($1='' OR LOWER(TRIM(category))=LOWER($1))
-      AND ($2='' OR name ILIKE $3 OR COALESCE(description,'') ILIKE $3)
-      ORDER BY category,id
-    `, [selected, search, `%${search}%`]);
+      WHERE active = TRUE
+      ORDER BY name ASC
+      LIMIT 2000
+    `);
 
-    let html = `
-    <div class="card">
-      <h2>All Social Media Services</h2>
-      <form method="GET" action="/services">
-        <input name="search" placeholder="🔍 Search services..." value="${esc(search)}">
-        <button>Search</button>
-      </form>
-    </div>
-    <div class="grid">`;
+    const platforms = [
+      { name: "All", logo: "🌐", color: "#555" },
+      { name: "Instagram", logo: "📸", color: "#d62976" },
+      { name: "Facebook", logo: "f", color: "#1877f2" },
+      { name: "YouTube", logo: "▶", color: "#ff0000" },
+      { name: "TikTok", logo: "♪", color: "#111111" },
+      { name: "Telegram", logo: "✈", color: "#229ed9" },
+      { name: "WhatsApp", logo: "☎", color: "#25d366" },
+      { name: "Twitter", logo: "𝕏", color: "#333333" },
+      { name: "Other", logo: "▦", color: "#666666" }
+    ];
 
-    for (const cat of categories) {
-      html += `<a class="category" href="/new-order?category=${encodeURIComponent(cat.name)}">
-        <span class="icon">${cat.icon}</span><strong>${cat.name}</strong>
-      </a>`;
+    function getPlatform(service) {
+      const text = (
+        String(service.category || "") + " " +
+        String(service.name || "")
+      ).toLowerCase();
+
+      if (/instagram|insta\b/.test(text)) return "Instagram";
+      if (/facebook|fb\b/.test(text)) return "Facebook";
+      if (/youtube|youtu\.be/.test(text)) return "YouTube";
+      if (/tiktok|tik tok/.test(text)) return "TikTok";
+      if (/telegram/.test(text)) return "Telegram";
+      if (/whatsapp|wa\b/.test(text)) return "WhatsApp";
+      if (/twitter|\bx\b/.test(text)) return "Twitter";
+
+      return "Other";
     }
 
-    html += `</div><div class="card"><h2>${selected ? esc(selected) + " Services" : "Available Services"}</h2>`;
+    let services = result.rows.map(s => ({
+      ...s,
+      platform: getPlatform(s)
+    }));
 
-    if (!result.rows.length) {
-      html += `<p>No services found.</p>`;
+    // Search all platforms together
+    if (search) {
+      const term = search.toLowerCase();
+
+      services = services.filter(s =>
+        String(s.name || "").toLowerCase().includes(term) ||
+        String(s.category || "").toLowerCase().includes(term) ||
+        String(s.description || "").toLowerCase().includes(term) ||
+        String(s.id).includes(term)
+      );
+    } else if (selected !== "All") {
+      services = services.filter(s => s.platform === selected);
     }
 
-    for (const s of result.rows) {
-      const cat = categories.find(c => c.name.toLowerCase() === String(s.category).toLowerCase());
-
-      html += `
-      <div class="service">
-        <h3>${cat?.icon || "⭐"} ${esc(s.name)}</h3>
-        <p class="small">${esc(s.category)} · ${esc(s.description)}</p>
-        <p>Price: <b>${money(s.rate)} / 1000</b></p>
-        <p class="small">Minimum: ${s.min} | Maximum: ${s.max}</p>
-        <a class="btn" href="/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}">Order Now</a>
-      </div>`;
+    const counts = {};
+    for (const p of platforms) {
+      counts[p.name] = p.name === "All"
+        ? result.rows.length
+        : result.rows.filter(s => getPlatform(s) === p.name).length;
     }
 
-    html += `</div>`;
-    sendPage(res, "Services", html, req.session.user);
-  } catch (e) {
-    console.error("Services error:", e);
-    res.status(500).send("Services loading error");
-  }
-});
+    const buttons = platforms.map(p => {
+      const active = selected === p.name && !search;
+      const url = p.name === "All"
+        ? "/services"
+        : "/services?platform=" + encodeURIComponent(p.name);
 
-// NEW ORDER - PLATFORM SELECTION
-app.get("/new-order", auth, async (req, res) => {
-  try {
-    const selected = String(req.query.category || "").trim();
-    const search = String(req.query.search || "").trim();
-    const serviceId = String(req.query.service || "").trim();
+      return `
+        <a href="${url}" style="
+          display:inline-flex;
+          align-items:center;
+          gap:8px;
+          background:${active ? p.color : "#292929"};
+          color:white;
+          border:1px solid ${p.color};
+          border-radius:10px;
+          padding:12px;
+          margin:4px;
+          text-decoration:none;
+          font-weight:bold;
+        ">
+          <span style="font-size:20px">${p.logo}</span>
+          <span>${p.name}</span>
+          <small style="color:white">(${counts[p.name]})</small>
+        </a>
+      `;
+    }).join("");
 
-    if (selected && !categories.some(c => c.name.toLowerCase() === selected.toLowerCase())) {
-      return res.status(400).send("Invalid platform");
-    }
+    const rows = services.map(s => `
+      <tr>
+        <td>${s.id}</td>
+        <td>${escapeHtml(s.name)}</td>
+        <td>${escapeHtml(s.platform)}</td>
+        <td>₹${Number(s.rate).toFixed(2)}</td>
+        <td>${s.min} - ${s.max}</td>
+        <td>
+          <a href="/new-order" style="
+            background:#e00000;
+            color:white;
+            padding:7px 10px;
+            border-radius:6px;
+          ">Order</a>
+        </td>
+      </tr>
+    `).join("");
 
-    if (!selected) {
-      let html = `
+    res.send(page("Services", `
       <div class="card">
-        <h2>Place New Order</h2>
-        <p>Select your social media platform</p>
-        <input id="platformSearch" placeholder="🔍 Search platform...">
-      </div>
-      <div class="grid" id="platformGrid">`;
+        <h2>🌐 All Social Media Services</h2>
 
-      for (const cat of categories) {
-        const count = await db.query(`
-          SELECT COUNT(*) FROM services
-          WHERE active=TRUE
-          AND LOWER(TRIM(category))=LOWER($1)
-        `, [cat.name]);
+        <form method="GET" action="/services">
+          <input
+            name="search"
+            value="${escapeHtml(search)}"
+            placeholder="🔍 Search any service from all platforms..."
+          >
+          <button type="submit">Search All Services</button>
+          <a href="/services" style="margin-left:10px">Clear</a>
+        </form>
 
-        html += `
-        <a class="category" data-platform="${cat.name.toLowerCase()}"
-           href="/new-order?category=${encodeURIComponent(cat.name)}">
-          <span class="icon">${cat.icon}</span>
-          <strong>${cat.name}</strong>
-          <p class="small">${count.rows[0].count} Services</p>
-        </a>`;
-      }
-
-      html += `</div>
-      <script>
-      document.getElementById("platformSearch").addEventListener("input", function(){
-        const q=this.value.toLowerCase();
-        document.querySelectorAll("#platformGrid .category").forEach(el=>{
-          el.style.display=el.dataset.platform.includes(q)?"block":"none";
-        });
-      });
-      </script>`;
-
-      return sendPage(res, "New Order", html, req.session.user);
-    }
-
-    const cat = categories.find(c => c.name.toLowerCase() === selected.toLowerCase());
-
-    const result = await db.query(`
-      SELECT * FROM services
-      WHERE active=TRUE
-      AND LOWER(TRIM(category))=LOWER($1)
-      AND ($2='' OR name ILIKE $3 OR COALESCE(description,'') ILIKE $3)
-      ORDER BY id DESC
-    `, [cat.name, search, `%${search}%`]);
-
-    let html = `
-    <div class="card">
-      <a class="back" href="/new-order">← All Platforms</a>
-      <div class="platform-title">
-        <span>${cat.icon}</span>
-        <h2>${esc(cat.name)} Services</h2>
-      </div>
-      <form method="GET" action="/new-order">
-        <input type="hidden" name="category" value="${esc(cat.name)}">
-        <div class="search-box">
-          <input name="search" placeholder="🔍 Search ${esc(cat.name)} services..." value="${esc(search)}">
+        <h3 style="color:#ff5555">Choose Platform</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          ${buttons}
         </div>
-        <button type="submit">Search Services</button>
-        <a class="btn" href="/new-order?category=${encodeURIComponent(cat.name)}">Show All</a>
-      </form>
-    </div>`;
 
-    if (!result.rows.length) {
-      html += `<div class="card"><p>No active ${esc(cat.name)} services found.</p></div>`;
-    }
+        <hr style="border-color:#444;margin:20px 0">
 
-    for (const s of result.rows) {
-      html += `
-      <div class="service">
-        <h3>${esc(s.name)}</h3>
-        <p class="small">${esc(s.description)}</p>
-        <p>Price: <b>${money(s.rate)} / 1000</b></p>
-        <p class="small">Minimum: ${s.min} | Maximum: ${s.max}</p>
-        <a class="btn" href="/new-order?category=${encodeURIComponent(cat.name)}&service=${s.id}">Select Service</a>
-      </div>`;
-    }
+        <h3>Available Services (${services.length})</h3>
 
-    if (serviceId) {
-      const chosen = await db.query(`
-        SELECT * FROM services
-        WHERE id=$1 AND active=TRUE
-        AND LOWER(TRIM(category))=LOWER($2)
-      `, [serviceId, cat.name]);
+        <div style="overflow-x:auto">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>Service</th>
+              <th>Platform</th>
+              <th>Rate / 1000</th>
+              <th>Min / Max</th>
+              <th>Order</th>
+            </tr>
+            ${rows || `
+              <tr>
+                <td colspan="6">No services found.</td>
+              </tr>
+            `}
+          </table>
+        </div>
+      </div>
+    `, req.session.user));
 
-      if (chosen.rows.length) {
-        const s = chosen.rows[0];
-
-        html += `
-        <div class="card">
-          <h2>Place Order</h2>
-          <h3>${esc(s.name)}</h3>
-          <p>Price: ${money(s.rate)} / 1000</p>
-          <form method="POST" action="/new-order/${s.id}">
-            <label>Post Profile Link</label>
-            <input name="link" type="url" placeholder="https://..." required>
-            <label>Quantity</label>
-            <input name="quantity" type="number" min="${s.min}" max="${s.max}" required>
-            <button type="submit">Place Order</button>
-          </form>
-        </div>`;
-      }
-    }
-
-    sendPage(res, "New Order", html, req.session.user);
-  } catch (e) {
-    console.error("New order page error:", e);
-    res.status(500).send("New Order loading error");
+  } catch (error) {
+    console.error("Services page error:", error);
+    res.status(500).send("Unable to load services. Please try again.");
   }
 });
 
-// OLD ORDER URL SUPPORT
-app.get("/new-order/:id", auth, async (req, res) => {
-  try {
-    const result = await db.query(
-      "SELECT * FROM services WHERE id=$1 AND active=TRUE",
-      [req.params.id]
-    );
+app.get("/new-order", requireLogin, async (req, res) => {
+  const services = await db("SELECT * FROM services WHERE active=TRUE ORDER BY name");
 
-    if (!result.rows.length) return res.status(404).send("Service not found");
-
-    const s = result.rows[0];
-    res.redirect(`/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}`);
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Service error");
-  }
+  res.send(page("New Order", `
+  <div class="card">
+  <h2>Place New Order</h2>
+  <form method="POST">
+  <label>Select Service</label>
+  <select name="service_id" required>
+  ${services.rows.map(s => `<option value="${s.id}">${escapeHtml(s.name)} - ₹${Number(s.rate).toFixed(2)}</option>`).join("")}
+  </select>
+  <input name="link" type="url" placeholder="Post/Profile Link" required>
+  <input name="quantity" type="number" placeholder="Quantity" min="1" required>
+  <button>Place Order</button>
+  </form>
+  </div>`, req.session.user));
 });
 
-// PLACE ORDER
-app.post("/new-order/:id", auth, async (req, res) => {
-  const client = await db.connect();
+app.post("/new-order", requireLogin, async (req, res) => {
+  const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    const service = await client.query(
-      "SELECT * FROM services WHERE id=$1 AND active=TRUE",
-      [req.params.id]
-    );
-
-    if (!service.rows.length) throw new Error("Service not found");
-
-    const s = service.rows[0];
+    const sid = Number(req.body.service_id);
     const quantity = Number(req.body.quantity);
     const link = String(req.body.link || "").trim();
 
-    if (!Number.isInteger(quantity) ||
-        quantity < Number(s.min) ||
-        quantity > Number(s.max) ||
-        !/^https?:\/\//i.test(link)) {
-      throw new Error("Invalid link or quantity");
+    if (!Number.isSafeInteger(sid) || !Number.isSafeInteger(quantity) ||
+        quantity < 1 || !/^https?:\/\//i.test(link)) {
+      throw new Error("Invalid order details");
     }
 
-    const charge = Number((Number(s.rate) * quantity / 1000).toFixed(2));
-
-    const account = await client.query(
-      "SELECT balance FROM users WHERE id=$1 FOR UPDATE",
-      [req.session.user.id]
+    const sr = await client.query(
+      "SELECT * FROM services WHERE id=$1 AND active=TRUE",
+      [sid]
     );
 
-    if (!account.rows.length || Number(account.rows[0].balance) < charge) {
-      throw new Error("Insufficient balance. Please Add Funds.");
+    if (!sr.rows.length) throw new Error("Service unavailable");
+
+    const service = sr.rows[0];
+
+    if (quantity < service.min || quantity > service.max) {
+      throw new Error("Quantity outside allowed limits");
     }
 
-    await client.query(
-      "UPDATE users SET balance=balance-$1 WHERE id=$2",
+    const charge = Number((quantity * Number(service.rate) / 1000).toFixed(2));
+
+    if (!Number.isFinite(charge) || charge <= 0) {
+      throw new Error("Invalid service price");
+    }
+
+    const ur = await client.query(
+      "UPDATE users SET balance=balance-$1 WHERE id=$2 AND balance >= $1 RETURNING id",
       [charge, req.session.user.id]
     );
 
-    // Existing orders schema has no service_name column.
-    await client.query(`
+    if (!ur.rows.length) throw new Error("Insufficient wallet balance");
+
+    const order = await client.query(`
       INSERT INTO orders(user_id,service_id,link,quantity,charge,status)
-      VALUES($1,$2,$3,$4,$5,'Pending')
-    `, [req.session.user.id, s.id, link, quantity, charge]);
+      VALUES($1,$2,$3,$4,$5,'Pending') RETURNING id
+    `, [req.session.user.id, sid, link, quantity, charge]);
 
     await client.query("COMMIT");
+
+    let providerOrder = null;
+
+    if (typeof providerAddOrder === "function") {
+      try {
+        const result = await providerAddOrder(service.provider_id, link, quantity);
+        providerOrder = result && result.order;
+
+        if (!providerOrder) throw new Error("Provider did not return order ID");
+
+        await db(`
+          UPDATE orders SET provider_order_id=$1,status='Processing'
+          WHERE id=$2
+        `, [String(providerOrder), order.rows[0].id]);
+      } catch (e) {
+        await refundOrder(order.rows[0].id, req.session.user.id, charge);
+        return message(res, "Provider order failed. Your wallet has been refunded.", req.session.user);
+      }
+    }
+
     res.redirect("/orders");
   } catch (e) {
-    await client.query("ROLLBACK");
-    console.error("Place order error:", e);
-    res.status(400).send(`${esc(e.message)} <a href="/new-order">Go back</a>`);
+    await client.query("ROLLBACK").catch(() => {});
+    message(res, escapeHtml(e.message), req.session.user);
   } finally {
     client.release();
   }
 });
 
-// ORDER HISTORY
-app.get("/orders", auth, async (req, res) => {
-  try {
-    const result = await db.query(`
-      SELECT o.*, COALESCE(s.name, 'Service #' || o.service_id::text) AS service_name
-      FROM orders o
-      LEFT JOIN services s ON s.id=o.service_id
-      WHERE o.user_id=$1
-      ORDER BY o.id DESC
-    `, [req.session.user.id]);
-
-    let html = `<div class="card"><h2>My Order History</h2>
-    <table><tr><th>ID</th><th>Service</th><th>Link</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>`;
-
-    for (const o of result.rows) {
-      html += `<tr>
-        <td>#${o.id}</td>
-        <td>${esc(o.service_name)}</td>
-        <td>${esc(o.link)}</td>
-        <td>${o.quantity}</td>
-        <td>${money(o.charge)}</td>
-        <td>${esc(o.status)}</td>
-      </tr>`;
-    }
-
-    html += `</table></div>`;
-    sendPage(res, "Orders", html, req.session.user);
-  } catch (e) {
-    console.error("Orders error:", e);
-    res.status(500).send("Order history error");
-  }
-});
-
-// ADD FUNDS
-app.get("/add-funds", auth, (req, res) => {
-  sendPage(res, "Add Funds", `
-  <div class="card">
-    <h2>Add Funds</h2>
-    <div class="notice">Minimum ₹100 · Maximum ₹2000</div>
-    ${process.env.UPI_ID ? `<p>UPI ID: <b>${esc(process.env.UPI_ID)}</b></p>` : ""}
-    ${process.env.UPI_QR_URL ? `<img src="${esc(process.env.UPI_QR_URL)}" style="width:200px;max-width:100%">` : ""}
-    <p>Pay first, then submit your UTR number. Balance is added after admin verification.</p>
-    <form method="POST" action="/add-funds">
-      <label>Amount (₹)</label>
-      <input type="number" name="amount" min="100" max="2000" required>
-      <label>UTR / Transaction ID</label>
-      <input name="utr" minlength="6" maxlength="100" required>
-      <button>Submit Payment Request</button>
-    </form>
-  </div>`, req.session.user);
-});
-
-app.post("/add-funds", auth, async (req, res) => {
-  const amount = Number(req.body.amount);
-  const utr = String(req.body.utr || "").trim();
-
-  if (!Number.isFinite(amount) || amount < 100 || amount > 2000 ||
-      !/^[a-zA-Z0-9-]{6,100}$/.test(utr)) {
-    return res.status(400).send("Invalid amount or UTR.");
-  }
-
-  try {
-    await db.query(
-      "INSERT INTO payments(user_id,amount,utr) VALUES($1,$2,$3)",
-      [req.session.user.id, amount, utr]
-    );
-
-    res.send("Payment request submitted. Await admin approval. <a href='/dashboard'>Dashboard</a>");
-  } catch (e) {
-    console.error("Payment request error:", e);
-    res.status(400).send("Payment request failed.");
-  }
-});
-
-// SUPPORT
-app.get("/support", auth, (req, res) => {
-  sendPage(res, "Support", `
-  <div class="card">
-    <h2>Customer Support</h2>
-    ${process.env.WHATSAPP_NUMBER ?
-      `<p>WhatsApp: <a href="https://wa.me/${encodeURIComponent(process.env.WHATSAPP_NUMBER)}">Contact Support</a></p>` : ""}
-    <form method="POST" action="/support">
-      <textarea name="message" placeholder="Write your message..." required maxlength="2000"></textarea>
-      <button>Send Message</button>
-    </form>
-  </div>`, req.session.user);
-});
-
-app.post("/support", auth, async (req, res) => {
-  const message = String(req.body.message || "").trim();
-
-  if (!message || message.length > 2000) {
-    return res.status(400).send("Invalid message");
-  }
-
-  try {
-    await db.query(
-      "INSERT INTO tickets(user_id,message) VALUES($1,$2)",
-      [req.session.user.id, message]
-    );
-
-    res.redirect("/support");
-  } catch (e) {
-    console.error("Support error:", e);
-    res.status(500).send("Support message failed");
-  }
-});
-
-// ADMIN PANEL
-app.get("/admin", auth, admin, async (req, res) => {
-  try {
-    const [users, services, orders, payments, tickets] = await Promise.all([
-      db.query("SELECT COUNT(*) FROM users"),
-      db.query("SELECT * FROM services ORDER BY category,id DESC"),
-      db.query(`
-        SELECT o.*, COALESCE(s.name,'Service #' || o.service_id::text) AS service_name
-        FROM orders o LEFT JOIN services s ON s.id=o.service_id
-        ORDER BY o.id DESC LIMIT 100
-      `),
-      db.query(`
-        SELECT p.*,u.email FROM payments p
-        JOIN users u ON u.id=p.user_id
-        ORDER BY p.id DESC LIMIT 100
-      `),
-      db.query(`
-        SELECT t.*,u.email FROM tickets t
-        JOIN users u ON u.id=t.user_id
-        ORDER BY t.id DESC LIMIT 100
-      `)
-    ]);
-
-    let html = `
-    <div class="card">
-      <h2>Admin Panel</h2>
-      <div class="grid">
-        <div>Total Users: ${users.rows[0].count}</div>
-        <div>Total Services: ${services.rows.length}</div>
-        <div>Total Orders: ${orders.rows.length}</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Add New Service</h2>
-      <form method="POST" action="/admin/services">
-        <select name="category" required>
-          ${categories.map(c => `<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
-        </select>
-        <input name="name" placeholder="Service Name" required maxlength="150">
-        <input name="description" placeholder="Description">
-        <input name="rate" type="number" min="0" step="0.01" placeholder="Price per 1000" required>
-        <input name="min" type="number" min="1" value="100" required>
-        <input name="max" type="number" min="1" value="100000" required>
-        <button>Add Service</button>
-      </form>
-    </div>
-
-    <div class="card"><h2>Manage Services</h2>
-    <table><tr><th>ID</th><th>Category</th><th>Name</th><th>Rate</th><th>Min</th><th>Max</th><th>Action</th></tr>`;
-
-    for (const s of services.rows) {
-      html += `<tr>
-        <td>${s.id}</td>
-        <td>${esc(s.category)}</td>
-        <td>${esc(s.name)}</td>
-        <td>${money(s.rate)}</td>
-        <td>${s.min}</td>
-        <td>${s.max}</td>
-        <td>
-          <form method="POST" action="/admin/services/${s.id}/toggle">
-            <button>${s.active ? "Disable" : "Enable"}</button>
-          </form>
-        </td>
-      </tr>`;
-    }
-
-    html += `</table></div><div class="card"><h2>Payment Requests</h2>
-    <table><tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>`;
-
-    for (const p of payments.rows) {
-      html += `<tr>
-        <td>${p.id}</td>
-        <td>${esc(p.email)}</td>
-        <td>${money(p.amount)}</td>
-        <td>${esc(p.utr)}</td>
-        <td>${esc(p.status)}</td>
-        <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>` : ""}</td>
-      </tr>`;
-    }
-
-    html += `</table></div><div class="card"><h2>Recent Orders</h2>
-    <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Update</th></tr>`;
-
-    for (const o of orders.rows) {
-      html += `<tr>
-        <td>${o.id}</td>
-        <td>${esc(o.service_name)}</td>
-        <td>${o.quantity}</td>
-        <td>${money(o.charge)}</td>
-        <td>${esc(o.status)}</td>
-        <td>
-          <form method="POST" action="/admin/orders/${o.id}/status">
-            <select name="status">
-              ${["Pending","Processing","Completed","Partial","Cancelled"].map(v =>
-                `<option ${v === o.status ? "selected" : ""}>${v}</option>`).join("")}
-            </select>
-            <button>Save</button>
-          </form>
-        </td>
-      </tr>`;
-    }
-
-    html += `</table></div><div class="card"><h2>Support Tickets</h2>`;
-
-    for (const t of tickets.rows) {
-      html += `<div class="service">
-        <b>${esc(t.email)}</b>
-        <p>${esc(t.message)}</p>
-        <p>${esc(t.status)}</p>
-      </div>`;
-    }
-
-    html += `</div>`;
-    sendPage(res, "Admin", html, req.session.user);
-  } catch (e) {
-    console.error("Admin page error:", e);
-    res.status(500).send("Admin panel loading error");
-  }
-});
-
-// ADMIN ADD SERVICE
-app.post("/admin/services", auth, admin, async (req, res) => {
-  const category = String(req.body.category || "");
-  const name = String(req.body.name || "").trim();
-  const description = String(req.body.description || "");
-  const rate = Number(req.body.rate);
-  const min = Number(req.body.min);
-  const max = Number(req.body.max);
-
-  if (!categories.some(c => c.name === category) ||
-      !name || name.length > 150 ||
-      !Number.isFinite(rate) || rate < 0 ||
-      !Number.isInteger(min) || !Number.isInteger(max) ||
-      min < 1 || max < min) {
-    return res.status(400).send("Invalid service information");
-  }
-
-  try {
-    await db.query(`
-      INSERT INTO services(category,name,description,rate,min,max,active,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,TRUE,NOW())
-    `, [category, name, description, rate, min, max]);
-
-    res.redirect("/admin");
-  } catch (e) {
-    console.error("Add service error:", e);
-    res.status(500).send("Could not add service");
-  }
-});
-
-// ADMIN ENABLE / DISABLE SERVICE
-app.post("/admin/services/:id/toggle", auth, admin, async (req, res) => {
-  try {
-    await db.query(
-      "UPDATE services SET active=NOT active, updated_at=NOW() WHERE id=$1",
-      [req.params.id]
-    );
-
-    res.redirect("/admin");
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Service update failed");
-  }
-});
-
-// ADMIN APPROVE PAYMENT
-app.post("/admin/payments/:id/approve", auth, admin, async (req, res) => {
-  const client = await db.connect();
-
+async function refundOrder(orderId, userId, amount) {
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const r = await client.query(
+      "SELECT status FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE",
+      [orderId, userId]
+    );
+    if (r.rows.length && r.rows[0].status !== "Refunded") {
+      await client.query("UPDATE users SET balance=balance+$1 WHERE id=$2", [amount, userId]);
+      await client.query("UPDATE orders SET status='Refunded' WHERE id=$1", [orderId]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
+app.get("/orders", requireLogin, async (req, res) => {
+  const result = await db(`
+    SELECT o.*,s.name AS service_name
+    FROM orders o LEFT JOIN services s ON s.id=o.service_id
+    WHERE o.user_id=$1 ORDER BY o.id DESC LIMIT 200
+  `, [req.session.user.id]);
+
+  res.send(page("Orders", `
+  <div class="card"><h2>My Orders</h2>
+  <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
+  ${result.rows.map(o => `<tr>
+  <td>${o.id}</td><td>${escapeHtml(o.service_name || "")}</td>
+  <td>${o.quantity}</td><td>₹${Number(o.charge).toFixed(2)}</td>
+  <td>${escapeHtml(o.status)}</td></tr>`).join("")}
+  </table></div>`, req.session.user));
+});
+
+app.get("/add-funds", requireLogin, (req, res) => {
+  res.send(page("Add Funds", `
+  <div class="card">
+  <h2>Add Funds</h2>
+  <p>Minimum ₹10 - Maximum ₹2000</p>
+  <p>UPI ID: <b>${escapeHtml(UPI_ID)}</b></p>
+  <img src="/payment-qr.png" style="width:220px;max-width:100%" alt="Payment QR">
+  <form method="POST">
+  <input name="amount" type="number" min="10" max="2000" placeholder="Amount ₹" required>
+  <input name="utr" placeholder="12-digit UTR / Transaction ID" required minlength="12" maxlength="30">
+  <button>Submit Payment Request</button>
+  </form>
+  <p>Payment will be added after admin verification.</p>
+  </div>`, req.session.user));
+});
+
+app.post("/add-funds", requireLogin, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    const utr = String(req.body.utr || "").trim();
+
+    if (!Number.isFinite(amount) || amount < 10 || amount > 2000 ||
+        !/^[A-Za-z0-9]{12,30}$/.test(utr)) {
+      return message(res, "Invalid amount or UTR.", req.session.user);
+    }
+
+    await db(`
+      INSERT INTO payments(user_id,amount,utr)
+      VALUES($1,$2,$3)
+    `, [req.session.user.id, amount, utr]);
+
+    message(res, "Payment request submitted. Waiting for admin approval.", req.session.user);
+  } catch (e) {
+    message(res, "Payment request failed.", req.session.user);
+  }
+});
+
+app.get("/support", requireLogin, (req, res) => {
+  res.send(page("Support", `
+  <div class="card">
+  <h2>Customer Support</h2>
+  <form method="POST">
+  <textarea name="message" placeholder="Write your problem" required></textarea>
+  <button>Submit Ticket</button>
+  </form>
+  <p><a href="https://wa.me/${WHATSAPP}" target="_blank">WhatsApp Support</a></p>
+  </div>`, req.session.user));
+});
+
+app.post("/support", requireLogin, async (req, res) => {
+  const text = String(req.body.message || "").trim().slice(0, 2000);
+  if (!text) return message(res, "Please enter your message.", req.session.user);
+
+  await db("INSERT INTO tickets(user_id,message) VALUES($1,$2)", [
+    req.session.user.id, text
+  ]);
+
+  message(res, "Support ticket submitted.", req.session.user);
+});
+
+app.get("/admin", requireAdmin, async (req, res) => {
+  const [users, orders, payments, services, tickets] = await Promise.all([
+    db("SELECT COUNT(*) FROM users"),
+    db("SELECT COUNT(*) FROM orders"),
+    db("SELECT COUNT(*) FROM payments WHERE status='Pending'"),
+    db("SELECT COUNT(*) FROM services WHERE active=TRUE"),
+    db("SELECT COUNT(*) FROM tickets WHERE status='Open'")
+  ]);
+
+  res.send(page("Admin Panel", `
+  <div class="card">
+  <h2>Admin Dashboard</h2>
+  <p>Users: ${users.rows[0].count}</p>
+  <p>Orders: ${orders.rows[0].count}</p>
+  <p>Pending Payments: ${payments.rows[0].count}</p>
+  <p>Active Services: ${services.rows[0].count}</p>
+  <p>Open Tickets: ${tickets.rows[0].count}</p>
+  </div>
+  <div class="card">
+  <h2>Service Management</h2>
+  <form method="POST" action="/admin/sync">
+  <button>Sync Services</button>
+  </form>
+  </div>
+  <div class="card">
+  <h2>Payment Requests</h2>
+  <a href="/admin/payments">Manage Payments</a>
+  </div>
+  <div class="card">
+  <h2>Orders</h2>
+  <a href="/admin/orders">Manage Orders</a>
+  </div>
+  <div class="card">
+  <h2>Support Tickets</h2>
+  <a href="/admin/tickets">View Tickets</a>
+  </div>`, req.session.user));
+});
+
+app.post("/admin/sync", requireAdmin, async (req, res) => {
+  try {
+    if (typeof providerServices !== "function") {
+      return message(res, "Provider API is not configured.", req.session.user);
+    }
+
+    const list = await providerServices();
+
+    if (!Array.isArray(list)) throw new Error("Invalid provider service response");
+
+    for (const s of list) {
+      if (!s.service || !s.name) continue;
+
+      await db(`
+        INSERT INTO services
+        (provider_id,name,category,rate,min,max,description,active,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,NOW())
+        ON CONFLICT(provider_id) DO UPDATE SET
+        name=EXCLUDED.name,
+        category=EXCLUDED.category,
+        rate=EXCLUDED.rate,
+        min=EXCLUDED.min,
+        max=EXCLUDED.max,
+        description=EXCLUDED.description,
+        active=TRUE,
+        updated_at=NOW()
+      `, [
+        String(s.service),
+        String(s.name),
+        String(s.category || "Other"),
+        Number(s.rate) || 0,
+        Number(s.min) || 1,
+        Number(s.max) || 100000,
+        String(s.desc || "")
+      ]);
+    }
+
+    message(res, `${list.length} provider services synchronized.`, req.session.user);
+  } catch (e) {
+    message(res, "Service sync failed: " + escapeHtml(e.message), req.session.user);
+  }
+});
+
+app.get("/admin/payments", requireAdmin, async (req, res) => {
+  const r = await db(`
+    SELECT p.*,u.username,u.email
+    FROM payments p JOIN users u ON u.id=p.user_id
+    ORDER BY p.id DESC LIMIT 200
+  `);
+
+  res.send(page("Payments", `
+  <div class="card"><h2>Payment Requests</h2>
+  <table><tr><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
+  ${r.rows.map(p => `<tr>
+  <td>${escapeHtml(p.username)}</td>
+  <td>₹${Number(p.amount).toFixed(2)}</td>
+  <td>${escapeHtml(p.utr)}</td>
+  <td>${escapeHtml(p.status)}</td>
+  <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form><form method="POST" action="/admin/payments/${p.id}/reject"><button>Reject</button></form>` : "-"}</td>
+  </tr>`).join("")}</table></div>`, req.session.user));
+});
+
+app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
     const p = await client.query(
       "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
       [req.params.id]
     );
 
     if (!p.rows.length || p.rows[0].status !== "Pending") {
-      throw new Error("Payment already processed or not found");
+      throw new Error("Payment is not pending");
     }
 
     await client.query(
@@ -924,63 +787,96 @@ app.post("/admin/payments/:id/approve", auth, admin, async (req, res) => {
     );
 
     await client.query("COMMIT");
-    res.redirect("/admin");
+    message(res, "Payment approved.", req.session.user);
   } catch (e) {
     await client.query("ROLLBACK");
-    console.error("Payment approval error:", e);
-    res.status(400).send("Payment approval failed");
+    message(res, escapeHtml(e.message), req.session.user);
   } finally {
     client.release();
   }
 });
 
-// ADMIN UPDATE ORDER STATUS
-app.post("/admin/orders/:id/status", auth, admin, async (req, res) => {
-  const allowed = ["Pending", "Processing", "Completed", "Partial", "Cancelled"];
-  const status = String(req.body.status || "");
+app.post("/admin/payments/:id/reject", requireAdmin, async (req, res) => {
+  await db(`
+    UPDATE payments SET status='Rejected'
+    WHERE id=$1 AND status='Pending'
+  `, [req.params.id]);
 
-  if (!allowed.includes(status)) {
-    return res.status(400).send("Invalid status");
-  }
-
-  try {
-    await db.query(
-      "UPDATE orders SET status=$1 WHERE id=$2",
-      [status, req.params.id]
-    );
-
-    res.redirect("/admin");
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Order status update failed");
-  }
+  message(res, "Payment request rejected.", req.session.user);
 });
 
-// HEALTH CHECK
-app.get("/health", async (req, res) => {
+app.get("/admin/orders", requireAdmin, async (req, res) => {
+  const r = await db(`
+    SELECT o.*,u.username,s.name AS service_name
+    FROM orders o
+    LEFT JOIN users u ON u.id=o.user_id
+    LEFT JOIN services s ON s.id=o.service_id
+    ORDER BY o.id DESC LIMIT 200
+  `);
+
+  res.send(page("Admin Orders", `
+  <div class="card"><h2>All Orders</h2>
+  <table><tr><th>ID</th><th>User</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
+  ${r.rows.map(o => `<tr>
+  <td>${o.id}</td><td>${escapeHtml(o.username || "")}</td>
+  <td>${escapeHtml(o.service_name || "")}</td>
+  <td>${o.quantity}</td><td>₹${Number(o.charge).toFixed(2)}</td>
+  <td>${escapeHtml(o.status)}</td></tr>`).join("")}
+  </table></div>`, req.session.user));
+});
+
+app.get("/admin/tickets", requireAdmin, async (req, res) => {
+  const r = await db(`
+    SELECT t.*,u.username
+    FROM tickets t JOIN users u ON u.id=t.user_id
+    ORDER BY t.id DESC LIMIT 200
+  `);
+
+  res.send(page("Support Tickets", `
+  <div class="card"><h2>Support Tickets</h2>
+  ${r.rows.map(t => `<p>#${t.id} - ${escapeHtml(t.username)} - ${escapeHtml(t.message)} - ${escapeHtml(t.status)}</p>`).join("")}
+  </div>`, req.session.user));
+});
+
+app.get("/api/health", async (req, res) => {
   try {
-    await db.query("SELECT 1");
+    await db("SELECT 1");
     res.json({ status: "OK", database: "Connected" });
   } catch (e) {
     res.status(503).json({ status: "ERROR", database: "Disconnected" });
   }
 });
 
-// 404
-app.use((req, res) => {
-  res.status(404).send("Page not found. <a href='/dashboard'>Dashboard</a>");
+app.get("/terms", (req, res) => {
+  res.send(page("Terms", `
+  <div class="card"><h2>Terms & Conditions</h2>
+  <p>All orders are subject to service availability and provider policies.</p>
+  <p>Payments are credited after verification.</p>
+  </div>`, req.session.user));
 });
 
-// START SERVER
-async function start() {
-  await initDB();
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log("ROYAL PANEL server running on port " + PORT);
-  });
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
 }
 
-start().catch(err => {
-  console.error("Server startup failed:", err);
-  process.exit(1);
+setupDatabase()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log("PanelAdminSMM.shop running on port " + PORT);
+    });
+  })
+  .catch(err => {
+    console.error("Database startup failed:", err);
+    process.exit(1);
+  });
+
+process.on("SIGTERM", async () => {
+  await pool.end();
+  process.exit(0);
 });
