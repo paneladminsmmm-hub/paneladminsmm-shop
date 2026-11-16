@@ -47,88 +47,24 @@ app.use(rateLimit({
 }));
 
 const categories = [
-  { name: "Instagram", icon: "📸", color: "#d946a8" },
-  { name: "Facebook", icon: "🔵", color: "#1877f2" },
-  { name: "YouTube", icon: "▶️", color: "#ff0000" },
-  { name: "TikTok", icon: "🎵", color: "#111111" },
-  { name: "Telegram", icon: "✈️", color: "#229ed9" },
-  { name: "WhatsApp", icon: "💬", color: "#25d366" },
-  { name: "Twitter", icon: "𝕏", color: "#555555" }
+  { name: "Instagram", icon: "📸" },
+  { name: "Facebook", icon: "🔵" },
+  { name: "YouTube", icon: "▶️" },
+  { name: "TikTok", icon: "🎵" },
+  { name: "Telegram", icon: "✈️" },
+  { name: "WhatsApp", icon: "💬" },
+  { name: "Twitter", icon: "𝕏" }
 ];
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
-  "&": "&amp;", "<": "&lt;", ">": "&gt;",
-  '"': "&quot;", "'": "&#39;"
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;"
 }[c]));
 
 const money = n => "₹" + Number(n || 0).toFixed(2);
-
-async function initDB() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      balance NUMERIC(12,2) DEFAULT 0,
-      role TEXT DEFAULT 'user',
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS services (
-      id SERIAL PRIMARY KEY,
-      category TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      price NUMERIC(12,2) NOT NULL DEFAULT 0,
-      min_quantity INTEGER DEFAULT 100,
-      max_quantity INTEGER DEFAULT 100000,
-      active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS orders (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      service_id INTEGER REFERENCES services(id),
-      service_name TEXT NOT NULL,
-      link TEXT NOT NULL,
-      quantity INTEGER NOT NULL,
-      charge NUMERIC(12,2) NOT NULL,
-      status TEXT DEFAULT 'Pending',
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS payments (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      amount NUMERIC(12,2) NOT NULL,
-      utr TEXT NOT NULL,
-      status TEXT DEFAULT 'Pending',
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS tickets (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      message TEXT NOT NULL,
-      status TEXT DEFAULT 'Open',
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
-    const email = process.env.ADMIN_EMAIL.toLowerCase().trim();
-    const password = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
-
-    await db.query(`
-      INSERT INTO users (name, email, password, role)
-      VALUES ('Administrator', $1, $2, 'admin')
-      ON CONFLICT (email)
-      DO UPDATE SET role = 'admin'
-    `, [email, password]);
-  }
-}
 
 function auth(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
@@ -140,6 +76,88 @@ function admin(req, res, next) {
     return res.status(403).send("Admin access required");
   }
   next();
+}
+
+// Existing database is preserved.
+// These CREATE statements only create missing tables;
+// they do not replace existing tables or their data.
+async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      balance NUMERIC(12,2) DEFAULT 0,
+      role VARCHAR(50) DEFAULT 'user',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS services (
+      id SERIAL PRIMARY KEY,
+      provider_id TEXT,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      rate NUMERIC(12,2) DEFAULT 0,
+      min INTEGER DEFAULT 100,
+      max INTEGER DEFAULT 100000,
+      description TEXT DEFAULT '',
+      active BOOLEAN DEFAULT TRUE,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users(id),
+      service_id INTEGER REFERENCES services(id),
+      provider_order_id TEXT,
+      link TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      charge NUMERIC(12,2) NOT NULL,
+      status TEXT DEFAULT 'Pending',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users(id),
+      amount NUMERIC(12,2) NOT NULL,
+      utr TEXT NOT NULL,
+      status TEXT DEFAULT 'Pending',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS tickets (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users(id),
+      message TEXT NOT NULL,
+      status TEXT DEFAULT 'Open',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // Promote the configured admin without changing an existing password.
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    const email = process.env.ADMIN_EMAIL.toLowerCase().trim();
+
+    const existing = await db.query(
+      "SELECT id FROM users WHERE LOWER(email)=$1 LIMIT 1",
+      [email]
+    );
+
+    if (existing.rows.length) {
+      await db.query(
+        "UPDATE users SET role='admin' WHERE id=$1",
+        [existing.rows[0].id]
+      );
+    } else {
+      const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+      await db.query(
+        "INSERT INTO users(name,email,password,role) VALUES($1,$2,$3,$4)",
+        ["Administrator", email, hash, "admin"]
+      );
+    }
+  }
 }
 
 function page(title, content, user = null) {
@@ -169,18 +187,21 @@ button:hover,.btn:hover{opacity:.85}
 .service{padding:15px;border:1px solid #eee;border-radius:10px;margin:10px 0;background:white}
 .service h3{margin:0 0 8px}
 .small{color:#777;font-size:13px}
-table{width:100%;border-collapse:collapse;background:white}
+table{width:100%;border-collapse:collapse;background:white;display:block;overflow-x:auto}
 td,th{padding:11px;border-bottom:1px solid #eee;text-align:left;font-size:13px}
-table{display:block;overflow-x:auto}
 .red{color:#e92e48;font-weight:bold}
 .notice{background:#fff4dc;padding:13px;border-radius:9px;margin:12px 0}
 .back{display:inline-block;margin-bottom:14px;color:#e92e48;text-decoration:none;font-weight:bold}
 .platform-title{display:flex;align-items:center;gap:10px}
 .platform-title span{font-size:32px}
-.search-box{position:relative}
 .search-box input{padding:15px;border:2px solid #e5e7eb}
 .search-box input:focus{outline:none;border-color:#e92e48}
-@media(max-width:600px){header{padding:14px}.container{margin:15px auto}.card{padding:15px}.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){
+header{padding:14px}
+.container{margin:15px auto}
+.card{padding:15px}
+.grid{grid-template-columns:repeat(2,1fr)}
+}
 </style>
 </head>
 <body>
@@ -246,6 +267,7 @@ app.post("/register", async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 12);
+
     await db.query(
       "INSERT INTO users(name,email,password) VALUES($1,$2,$3)",
       [name, email, hash]
@@ -253,6 +275,7 @@ app.post("/register", async (req, res) => {
 
     res.redirect("/login");
   } catch (e) {
+    console.error("Registration error:", e);
     res.status(400).send("Registration failed. Email may already exist.");
   }
 });
@@ -274,24 +297,32 @@ app.get("/login", (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const email = String(req.body.email || "").trim().toLowerCase();
-    const result = await db.query("SELECT * FROM users WHERE email=$1", [email]);
+
+    const result = await db.query(
+      "SELECT * FROM users WHERE LOWER(email)=$1 LIMIT 1",
+      [email]
+    );
+
     const user = result.rows[0];
 
-    if (!user || !(await bcrypt.compare(req.body.password || "", user.password))) {
+    if (!user || !(await bcrypt.compare(String(req.body.password || ""), user.password))) {
       return res.status(401).send("Incorrect email or password. <a href='/login'>Try again</a>");
     }
 
     req.session.regenerate(err => {
       if (err) return res.status(500).send("Session error");
+
       req.session.user = {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role
       };
+
       res.redirect("/dashboard");
     });
   } catch (e) {
+    console.error("Login error:", e);
     res.status(500).send("Login error");
   }
 });
@@ -305,213 +336,233 @@ app.get("/logout", (req, res) => {
 app.get("/dashboard", auth, async (req, res) => {
   const user = req.session.user;
 
-  const [balance, orders, services] = await Promise.all([
-    db.query("SELECT balance FROM users WHERE id=$1", [user.id]),
-    db.query("SELECT COUNT(*) FROM orders WHERE user_id=$1", [user.id]),
-    db.query("SELECT COUNT(*) FROM services WHERE active=TRUE")
-  ]);
+  try {
+    const [balance, orders, services] = await Promise.all([
+      db.query("SELECT balance FROM users WHERE id=$1", [user.id]),
+      db.query("SELECT COUNT(*) FROM orders WHERE user_id=$1", [user.id]),
+      db.query("SELECT COUNT(*) FROM services WHERE active=TRUE")
+    ]);
 
-  sendPage(res, "Dashboard", `
-  <div class="card">
-  <h2>Welcome, ${esc(user.name)} 👋</h2>
-  <p>Account: ${esc(user.email)}</p>
-  </div>
-  <div class="grid">
-    <div class="card"><p>Available Balance</p><h2 class="red">${money(balance.rows[0].balance)}</h2></div>
-    <div class="card"><p>Total Orders</p><h2>${orders.rows[0].count}</h2></div>
-    <div class="card"><p>Available Services</p><h2>${services.rows[0].count}</h2></div>
-  </div>
-  <div class="card">
-  <h2>Quick Actions</h2>
-  <a class="btn" href="/new-order">New Order</a>
-  <a class="btn" href="/orders">Order History</a>
-  <a class="btn" href="/add-funds">Add Funds</a>
-  </div>
-  `, user);
+    sendPage(res, "Dashboard", `
+    <div class="card">
+      <h2>Welcome, ${esc(user.name)} 👋</h2>
+      <p>Account: ${esc(user.email)}</p>
+    </div>
+    <div class="grid">
+      <div class="card"><p>Available Balance</p><h2 class="red">${money(balance.rows[0].balance)}</h2></div>
+      <div class="card"><p>Total Orders</p><h2>${orders.rows[0].count}</h2></div>
+      <div class="card"><p>Available Services</p><h2>${services.rows[0].count}</h2></div>
+    </div>
+    <div class="card">
+      <h2>Quick Actions</h2>
+      <a class="btn" href="/new-order">New Order</a>
+      <a class="btn" href="/orders">Order History</a>
+      <a class="btn" href="/add-funds">Add Funds</a>
+    </div>
+    `, user);
+  } catch (e) {
+    console.error("Dashboard error:", e);
+    res.status(500).send("Dashboard error");
+  }
 });
 
 // SERVICES
 app.get("/services", auth, async (req, res) => {
-  const selected = String(req.query.category || "");
-  const search = String(req.query.search || "").trim();
+  try {
+    const selected = String(req.query.category || "").trim();
+    const search = String(req.query.search || "").trim();
 
-  const result = await db.query(`
-    SELECT * FROM services
-    WHERE active=TRUE
-    AND ($1='' OR category=$1)
-    AND ($2='' OR name ILIKE $3 OR description ILIKE $3)
-    ORDER BY category,id
-  `, [selected, search, `%${search}%`]);
+    const result = await db.query(`
+      SELECT * FROM services
+      WHERE active=TRUE
+      AND ($1='' OR LOWER(TRIM(category))=LOWER($1))
+      AND ($2='' OR name ILIKE $3 OR COALESCE(description,'') ILIKE $3)
+      ORDER BY category,id
+    `, [selected, search, `%${search}%`]);
 
-  let html = `
-  <div class="card">
-  <h2>All Social Media Services</h2>
-  <form method="GET" action="/services">
-  <input name="search" placeholder="🔍 Search services..." value="${esc(search)}">
-  <button>Search</button>
-  </form>
-  </div>
-  <div class="grid">`;
-
-  for (const cat of categories) {
-    html += `<a class="category" href="/new-order?category=${encodeURIComponent(cat.name)}">
-      <span class="icon">${cat.icon}</span><strong>${cat.name}</strong>
-    </a>`;
-  }
-
-  html += `</div><div class="card"><h2>${selected ? esc(selected) + " Services" : "Available Services"}</h2>`;
-
-  if (!result.rows.length) {
-    html += `<p>No services found. Please contact administrator to add services.</p>`;
-  }
-
-  for (const s of result.rows) {
-    const cat = categories.find(c => c.name === s.category);
-    html += `
-    <div class="service">
-      <h3>${cat?.icon || "⭐"} ${esc(s.name)}</h3>
-      <p class="small">${esc(s.category)} · ${esc(s.description)}</p>
-      <p>Price: <b>${money(s.price)} / 1000</b></p>
-      <p class="small">Minimum: ${s.min_quantity} | Maximum: ${s.max_quantity}</p>
-      <a class="btn" href="/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}">Order Now</a>
-    </div>`;
-  }
-
-  html += `</div>`;
-  sendPage(res, "Services", html, req.session.user);
-});
-
-// NEW ORDER - PLATFORM SELECTION + CATEGORY SEARCH
-app.get("/new-order", auth, async (req, res) => {
-  const selected = String(req.query.category || "").trim();
-  const search = String(req.query.search || "").trim();
-  const serviceId = String(req.query.service || "").trim();
-
-  if (selected && !categories.some(c => c.name === selected)) {
-    return res.status(400).send("Invalid platform");
-  }
-
-  if (!selected) {
     let html = `
     <div class="card">
-      <h2>Place New Order</h2>
-      <p>Select your social media platform</p>
-      <div class="search-box">
-        <input id="platformSearch" placeholder="🔍 Search platform...">
-      </div>
+      <h2>All Social Media Services</h2>
+      <form method="GET" action="/services">
+        <input name="search" placeholder="🔍 Search services..." value="${esc(search)}">
+        <button>Search</button>
+      </form>
     </div>
-    <div class="grid" id="platformGrid">`;
+    <div class="grid">`;
 
     for (const cat of categories) {
-      const count = await db.query(
-        "SELECT COUNT(*) FROM services WHERE active=TRUE AND LOWER(TRIM(category))=LOWER($1)",
-        [cat.name]
-      );
-
-      html += `
-      <a class="category" data-platform="${cat.name.toLowerCase()}"
-         href="/new-order?category=${encodeURIComponent(cat.name)}">
-        <span class="icon">${cat.icon}</span>
-        <strong>${cat.name}</strong>
-        <p class="small">${count.rows[0].count} Services</p>
+      html += `<a class="category" href="/new-order?category=${encodeURIComponent(cat.name)}">
+        <span class="icon">${cat.icon}</span><strong>${cat.name}</strong>
       </a>`;
     }
 
-    html += `</div>
-    <script>
-    document.getElementById("platformSearch").addEventListener("input", function(){
-      const q=this.value.toLowerCase();
-      document.querySelectorAll("#platformGrid .category").forEach(el=>{
-        el.style.display=el.dataset.platform.includes(q)?"block":"none";
-      });
-    });
-    </script>`;
+    html += `</div><div class="card"><h2>${selected ? esc(selected) + " Services" : "Available Services"}</h2>`;
 
-    return sendPage(res, "New Order", html, req.session.user);
-  }
+    if (!result.rows.length) {
+      html += `<p>No services found.</p>`;
+    }
 
-  const cat = categories.find(c => c.name === selected);
-
-  const result = await db.query(`
-    SELECT * FROM services
-    WHERE active=TRUE
-    AND LOWER(TRIM(category))=LOWER($1)
-    AND ($2='' OR name ILIKE $3 OR description ILIKE $3)
-    ORDER BY id DESC
-  `, [selected, search, `%${search}%`]);
-
-  let html = `
-  <div class="card">
-    <a class="back" href="/new-order">← All Platforms</a>
-    <div class="platform-title">
-      <span>${cat.icon}</span>
-      <h2>${esc(cat.name)} Services</h2>
-    </div>
-    <form method="GET" action="/new-order">
-      <input type="hidden" name="category" value="${esc(selected)}">
-      <div class="search-box">
-        <input name="search" placeholder="🔍 Search ${esc(selected)} services..." value="${esc(search)}">
-      </div>
-      <button type="submit">Search Services</button>
-      <a class="btn" href="/new-order?category=${encodeURIComponent(selected)}">Show All</a>
-    </form>
-  </div>
-  `;
-
-  if (!result.rows.length) {
-    html += `<div class="card"><p>No active ${esc(selected)} services found.</p><p class="small">Admin Panel में इस platform की services add या enable करें।</p></div>`;
-  }
-
-  for (const s of result.rows) {
-    html += `
-    <div class="service">
-      <h3>${esc(s.name)}</h3>
-      <p class="small">${esc(s.description)}</p>
-      <p>Price: <b>${money(s.price)} / 1000</b></p>
-      <p class="small">Minimum: ${s.min_quantity} | Maximum: ${s.max_quantity}</p>
-      <a class="btn" href="/new-order?category=${encodeURIComponent(selected)}&service=${s.id}">Select Service</a>
-    </div>`;
-  }
-
-  if (serviceId) {
-    const chosen = await db.query(
-      "SELECT * FROM services WHERE id=$1 AND active=TRUE AND LOWER(TRIM(category))=LOWER($2)",
-      [serviceId, selected]
-    );
-
-    if (chosen.rows.length) {
-      const s = chosen.rows[0];
+    for (const s of result.rows) {
+      const cat = categories.find(c => c.name.toLowerCase() === String(s.category).toLowerCase());
 
       html += `
-      <div class="card">
-        <h2>Place Order</h2>
-        <h3>${esc(s.name)}</h3>
-        <p>Price: ${money(s.price)} / 1000</p>
-        <form method="POST" action="/new-order/${s.id}">
-          <label>Post Profile Link</label>
-          <input name="link" type="url" placeholder="https://..." required>
-          <label>Quantity</label>
-          <input name="quantity" type="number" min="${s.min_quantity}" max="${s.max_quantity}" required>
-          <button type="submit">Place Order</button>
-        </form>
+      <div class="service">
+        <h3>${cat?.icon || "⭐"} ${esc(s.name)}</h3>
+        <p class="small">${esc(s.category)} · ${esc(s.description)}</p>
+        <p>Price: <b>${money(s.rate)} / 1000</b></p>
+        <p class="small">Minimum: ${s.min} | Maximum: ${s.max}</p>
+        <a class="btn" href="/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}">Order Now</a>
       </div>`;
     }
-  }
 
-  sendPage(res, "New Order", html, req.session.user);
+    html += `</div>`;
+    sendPage(res, "Services", html, req.session.user);
+  } catch (e) {
+    console.error("Services error:", e);
+    res.status(500).send("Services loading error");
+  }
+});
+
+// NEW ORDER - PLATFORM SELECTION
+app.get("/new-order", auth, async (req, res) => {
+  try {
+    const selected = String(req.query.category || "").trim();
+    const search = String(req.query.search || "").trim();
+    const serviceId = String(req.query.service || "").trim();
+
+    if (selected && !categories.some(c => c.name.toLowerCase() === selected.toLowerCase())) {
+      return res.status(400).send("Invalid platform");
+    }
+
+    if (!selected) {
+      let html = `
+      <div class="card">
+        <h2>Place New Order</h2>
+        <p>Select your social media platform</p>
+        <input id="platformSearch" placeholder="🔍 Search platform...">
+      </div>
+      <div class="grid" id="platformGrid">`;
+
+      for (const cat of categories) {
+        const count = await db.query(`
+          SELECT COUNT(*) FROM services
+          WHERE active=TRUE
+          AND LOWER(TRIM(category))=LOWER($1)
+        `, [cat.name]);
+
+        html += `
+        <a class="category" data-platform="${cat.name.toLowerCase()}"
+           href="/new-order?category=${encodeURIComponent(cat.name)}">
+          <span class="icon">${cat.icon}</span>
+          <strong>${cat.name}</strong>
+          <p class="small">${count.rows[0].count} Services</p>
+        </a>`;
+      }
+
+      html += `</div>
+      <script>
+      document.getElementById("platformSearch").addEventListener("input", function(){
+        const q=this.value.toLowerCase();
+        document.querySelectorAll("#platformGrid .category").forEach(el=>{
+          el.style.display=el.dataset.platform.includes(q)?"block":"none";
+        });
+      });
+      </script>`;
+
+      return sendPage(res, "New Order", html, req.session.user);
+    }
+
+    const cat = categories.find(c => c.name.toLowerCase() === selected.toLowerCase());
+
+    const result = await db.query(`
+      SELECT * FROM services
+      WHERE active=TRUE
+      AND LOWER(TRIM(category))=LOWER($1)
+      AND ($2='' OR name ILIKE $3 OR COALESCE(description,'') ILIKE $3)
+      ORDER BY id DESC
+    `, [cat.name, search, `%${search}%`]);
+
+    let html = `
+    <div class="card">
+      <a class="back" href="/new-order">← All Platforms</a>
+      <div class="platform-title">
+        <span>${cat.icon}</span>
+        <h2>${esc(cat.name)} Services</h2>
+      </div>
+      <form method="GET" action="/new-order">
+        <input type="hidden" name="category" value="${esc(cat.name)}">
+        <div class="search-box">
+          <input name="search" placeholder="🔍 Search ${esc(cat.name)} services..." value="${esc(search)}">
+        </div>
+        <button type="submit">Search Services</button>
+        <a class="btn" href="/new-order?category=${encodeURIComponent(cat.name)}">Show All</a>
+      </form>
+    </div>`;
+
+    if (!result.rows.length) {
+      html += `<div class="card"><p>No active ${esc(cat.name)} services found.</p></div>`;
+    }
+
+    for (const s of result.rows) {
+      html += `
+      <div class="service">
+        <h3>${esc(s.name)}</h3>
+        <p class="small">${esc(s.description)}</p>
+        <p>Price: <b>${money(s.rate)} / 1000</b></p>
+        <p class="small">Minimum: ${s.min} | Maximum: ${s.max}</p>
+        <a class="btn" href="/new-order?category=${encodeURIComponent(cat.name)}&service=${s.id}">Select Service</a>
+      </div>`;
+    }
+
+    if (serviceId) {
+      const chosen = await db.query(`
+        SELECT * FROM services
+        WHERE id=$1 AND active=TRUE
+        AND LOWER(TRIM(category))=LOWER($2)
+      `, [serviceId, cat.name]);
+
+      if (chosen.rows.length) {
+        const s = chosen.rows[0];
+
+        html += `
+        <div class="card">
+          <h2>Place Order</h2>
+          <h3>${esc(s.name)}</h3>
+          <p>Price: ${money(s.rate)} / 1000</p>
+          <form method="POST" action="/new-order/${s.id}">
+            <label>Post Profile Link</label>
+            <input name="link" type="url" placeholder="https://..." required>
+            <label>Quantity</label>
+            <input name="quantity" type="number" min="${s.min}" max="${s.max}" required>
+            <button type="submit">Place Order</button>
+          </form>
+        </div>`;
+      }
+    }
+
+    sendPage(res, "New Order", html, req.session.user);
+  } catch (e) {
+    console.error("New order page error:", e);
+    res.status(500).send("New Order loading error");
+  }
 });
 
 // OLD ORDER URL SUPPORT
 app.get("/new-order/:id", auth, async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM services WHERE id=$1 AND active=TRUE",
-    [req.params.id]
-  );
+  try {
+    const result = await db.query(
+      "SELECT * FROM services WHERE id=$1 AND active=TRUE",
+      [req.params.id]
+    );
 
-  if (!result.rows.length) return res.status(404).send("Service not found");
+    if (!result.rows.length) return res.status(404).send("Service not found");
 
-  const s = result.rows[0];
-  res.redirect(`/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}`);
+    const s = result.rows[0];
+    res.redirect(`/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}`);
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("Service error");
+  }
 });
 
 // PLACE ORDER
@@ -533,13 +584,13 @@ app.post("/new-order/:id", auth, async (req, res) => {
     const link = String(req.body.link || "").trim();
 
     if (!Number.isInteger(quantity) ||
-        quantity < s.min_quantity ||
-        quantity > s.max_quantity ||
+        quantity < Number(s.min) ||
+        quantity > Number(s.max) ||
         !/^https?:\/\//i.test(link)) {
       throw new Error("Invalid link or quantity");
     }
 
-    const charge = Number(s.price) * quantity / 1000;
+    const charge = Number((Number(s.rate) * quantity / 1000).toFixed(2));
 
     const account = await client.query(
       "SELECT balance FROM users WHERE id=$1 FOR UPDATE",
@@ -555,15 +606,17 @@ app.post("/new-order/:id", auth, async (req, res) => {
       [charge, req.session.user.id]
     );
 
+    // Existing orders schema has no service_name column.
     await client.query(`
-      INSERT INTO orders(user_id,service_id,service_name,link,quantity,charge,status)
-      VALUES($1,$2,$3,$4,$5,$6,'Pending')
-    `, [req.session.user.id, s.id, s.name, link, quantity, charge]);
+      INSERT INTO orders(user_id,service_id,link,quantity,charge,status)
+      VALUES($1,$2,$3,$4,$5,'Pending')
+    `, [req.session.user.id, s.id, link, quantity, charge]);
 
     await client.query("COMMIT");
     res.redirect("/orders");
   } catch (e) {
     await client.query("ROLLBACK");
+    console.error("Place order error:", e);
     res.status(400).send(`${esc(e.message)} <a href="/new-order">Go back</a>`);
   } finally {
     client.release();
@@ -572,41 +625,53 @@ app.post("/new-order/:id", auth, async (req, res) => {
 
 // ORDER HISTORY
 app.get("/orders", auth, async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC",
-    [req.session.user.id]
-  );
+  try {
+    const result = await db.query(`
+      SELECT o.*, COALESCE(s.name, 'Service #' || o.service_id::text) AS service_name
+      FROM orders o
+      LEFT JOIN services s ON s.id=o.service_id
+      WHERE o.user_id=$1
+      ORDER BY o.id DESC
+    `, [req.session.user.id]);
 
-  let html = `<div class="card"><h2>My Order History</h2>
-  <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>`;
+    let html = `<div class="card"><h2>My Order History</h2>
+    <table><tr><th>ID</th><th>Service</th><th>Link</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>`;
 
-  for (const o of result.rows) {
-    html += `<tr>
-    <td>#${o.id}</td><td>${esc(o.service_name)}</td>
-    <td>${o.quantity}</td><td>${money(o.charge)}</td>
-    <td>${esc(o.status)}</td></tr>`;
+    for (const o of result.rows) {
+      html += `<tr>
+        <td>#${o.id}</td>
+        <td>${esc(o.service_name)}</td>
+        <td>${esc(o.link)}</td>
+        <td>${o.quantity}</td>
+        <td>${money(o.charge)}</td>
+        <td>${esc(o.status)}</td>
+      </tr>`;
+    }
+
+    html += `</table></div>`;
+    sendPage(res, "Orders", html, req.session.user);
+  } catch (e) {
+    console.error("Orders error:", e);
+    res.status(500).send("Order history error");
   }
-
-  html += `</table></div>`;
-  sendPage(res, "Orders", html, req.session.user);
 });
 
 // ADD FUNDS
 app.get("/add-funds", auth, (req, res) => {
   sendPage(res, "Add Funds", `
   <div class="card">
-  <h2>Add Funds</h2>
-  <div class="notice">Minimum ₹100 · Maximum ₹2000</div>
-  ${process.env.UPI_ID ? `<p>UPI ID: <b>${esc(process.env.UPI_ID)}</b></p>` : ""}
-  ${process.env.UPI_QR_URL ? `<img src="${esc(process.env.UPI_QR_URL)}" style="width:200px;max-width:100%">` : ""}
-  <p>Pay first, then submit your UTR number. Balance is added after admin verification.</p>
-  <form method="POST" action="/add-funds">
-  <label>Amount (₹)</label>
-  <input type="number" name="amount" min="100" max="2000" required>
-  <label>UTR / Transaction ID</label>
-  <input name="utr" minlength="6" maxlength="100" required>
-  <button>Submit Payment Request</button>
-  </form>
+    <h2>Add Funds</h2>
+    <div class="notice">Minimum ₹100 · Maximum ₹2000</div>
+    ${process.env.UPI_ID ? `<p>UPI ID: <b>${esc(process.env.UPI_ID)}</b></p>` : ""}
+    ${process.env.UPI_QR_URL ? `<img src="${esc(process.env.UPI_QR_URL)}" style="width:200px;max-width:100%">` : ""}
+    <p>Pay first, then submit your UTR number. Balance is added after admin verification.</p>
+    <form method="POST" action="/add-funds">
+      <label>Amount (₹)</label>
+      <input type="number" name="amount" min="100" max="2000" required>
+      <label>UTR / Transaction ID</label>
+      <input name="utr" minlength="6" maxlength="100" required>
+      <button>Submit Payment Request</button>
+    </form>
   </div>`, req.session.user);
 });
 
@@ -624,8 +689,10 @@ app.post("/add-funds", auth, async (req, res) => {
       "INSERT INTO payments(user_id,amount,utr) VALUES($1,$2,$3)",
       [req.session.user.id, amount, utr]
     );
+
     res.send("Payment request submitted. Await admin approval. <a href='/dashboard'>Dashboard</a>");
   } catch (e) {
+    console.error("Payment request error:", e);
     res.status(400).send("Payment request failed.");
   }
 });
@@ -634,13 +701,13 @@ app.post("/add-funds", auth, async (req, res) => {
 app.get("/support", auth, (req, res) => {
   sendPage(res, "Support", `
   <div class="card">
-  <h2>Customer Support</h2>
-  ${process.env.WHATSAPP_NUMBER ?
-    `<p>WhatsApp: <a href="https://wa.me/${encodeURIComponent(process.env.WHATSAPP_NUMBER)}">Contact Support</a></p>` : ""}
-  <form method="POST" action="/support">
-  <textarea name="message" placeholder="Write your message..." required maxlength="2000"></textarea>
-  <button>Send Message</button>
-  </form>
+    <h2>Customer Support</h2>
+    ${process.env.WHATSAPP_NUMBER ?
+      `<p>WhatsApp: <a href="https://wa.me/${encodeURIComponent(process.env.WHATSAPP_NUMBER)}">Contact Support</a></p>` : ""}
+    <form method="POST" action="/support">
+      <textarea name="message" placeholder="Write your message..." required maxlength="2000"></textarea>
+      <button>Send Message</button>
+    </form>
   </div>`, req.session.user);
 });
 
@@ -651,127 +718,183 @@ app.post("/support", auth, async (req, res) => {
     return res.status(400).send("Invalid message");
   }
 
-  await db.query(
-    "INSERT INTO tickets(user_id,message) VALUES($1,$2)",
-    [req.session.user.id, message]
-  );
+  try {
+    await db.query(
+      "INSERT INTO tickets(user_id,message) VALUES($1,$2)",
+      [req.session.user.id, message]
+    );
 
-  res.redirect("/support");
+    res.redirect("/support");
+  } catch (e) {
+    console.error("Support error:", e);
+    res.status(500).send("Support message failed");
+  }
 });
 
 // ADMIN PANEL
 app.get("/admin", auth, admin, async (req, res) => {
-  const [users, services, orders, payments, tickets] = await Promise.all([
-    db.query("SELECT COUNT(*) FROM users"),
-    db.query("SELECT * FROM services ORDER BY category,id DESC"),
-    db.query("SELECT * FROM orders ORDER BY id DESC LIMIT 100"),
-    db.query("SELECT p.*,u.email FROM payments p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC LIMIT 100"),
-    db.query("SELECT t.*,u.email FROM tickets t JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 100")
-  ]);
+  try {
+    const [users, services, orders, payments, tickets] = await Promise.all([
+      db.query("SELECT COUNT(*) FROM users"),
+      db.query("SELECT * FROM services ORDER BY category,id DESC"),
+      db.query(`
+        SELECT o.*, COALESCE(s.name,'Service #' || o.service_id::text) AS service_name
+        FROM orders o LEFT JOIN services s ON s.id=o.service_id
+        ORDER BY o.id DESC LIMIT 100
+      `),
+      db.query(`
+        SELECT p.*,u.email FROM payments p
+        JOIN users u ON u.id=p.user_id
+        ORDER BY p.id DESC LIMIT 100
+      `),
+      db.query(`
+        SELECT t.*,u.email FROM tickets t
+        JOIN users u ON u.id=t.user_id
+        ORDER BY t.id DESC LIMIT 100
+      `)
+    ]);
 
-  let html = `
-  <div class="card">
-  <h2>Admin Panel</h2>
-  <div class="grid">
-  <div>Total Users: ${users.rows[0].count}</div>
-  <div>Total Services: ${services.rows.length}</div>
-  <div>Total Orders: ${orders.rows.length}</div>
-  </div>
-  </div>
+    let html = `
+    <div class="card">
+      <h2>Admin Panel</h2>
+      <div class="grid">
+        <div>Total Users: ${users.rows[0].count}</div>
+        <div>Total Services: ${services.rows.length}</div>
+        <div>Total Orders: ${orders.rows.length}</div>
+      </div>
+    </div>
 
-  <div class="card">
-  <h2>Add New Service</h2>
-  <form method="POST" action="/admin/services">
-  <select name="category" required>
-  ${categories.map(c => `<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
-  </select>
-  <input name="name" placeholder="Service Name" required maxlength="150">
-  <input name="description" placeholder="Description">
-  <input name="price" type="number" min="0" step="0.01" placeholder="Price per 1000" required>
-  <input name="min_quantity" type="number" min="1" value="100" required>
-  <input name="max_quantity" type="number" min="1" value="100000" required>
-  <button>Add Service</button>
-  </form>
-  </div>
+    <div class="card">
+      <h2>Add New Service</h2>
+      <form method="POST" action="/admin/services">
+        <select name="category" required>
+          ${categories.map(c => `<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
+        </select>
+        <input name="name" placeholder="Service Name" required maxlength="150">
+        <input name="description" placeholder="Description">
+        <input name="rate" type="number" min="0" step="0.01" placeholder="Price per 1000" required>
+        <input name="min" type="number" min="1" value="100" required>
+        <input name="max" type="number" min="1" value="100000" required>
+        <button>Add Service</button>
+      </form>
+    </div>
 
-  <div class="card"><h2>Manage Services</h2>
-  <table><tr><th>ID</th><th>Category</th><th>Name</th><th>Price</th><th>Action</th></tr>`;
+    <div class="card"><h2>Manage Services</h2>
+    <table><tr><th>ID</th><th>Category</th><th>Name</th><th>Rate</th><th>Min</th><th>Max</th><th>Action</th></tr>`;
 
-  for (const s of services.rows) {
-    html += `<tr>
-    <td>${s.id}</td><td>${esc(s.category)}</td>
-    <td>${esc(s.name)}</td><td>${money(s.price)}</td>
-    <td><form method="POST" action="/admin/services/${s.id}/toggle">
-    <button>${s.active ? "Disable" : "Enable"}</button>
-    </form></td></tr>`;
+    for (const s of services.rows) {
+      html += `<tr>
+        <td>${s.id}</td>
+        <td>${esc(s.category)}</td>
+        <td>${esc(s.name)}</td>
+        <td>${money(s.rate)}</td>
+        <td>${s.min}</td>
+        <td>${s.max}</td>
+        <td>
+          <form method="POST" action="/admin/services/${s.id}/toggle">
+            <button>${s.active ? "Disable" : "Enable"}</button>
+          </form>
+        </td>
+      </tr>`;
+    }
+
+    html += `</table></div><div class="card"><h2>Payment Requests</h2>
+    <table><tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>`;
+
+    for (const p of payments.rows) {
+      html += `<tr>
+        <td>${p.id}</td>
+        <td>${esc(p.email)}</td>
+        <td>${money(p.amount)}</td>
+        <td>${esc(p.utr)}</td>
+        <td>${esc(p.status)}</td>
+        <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>` : ""}</td>
+      </tr>`;
+    }
+
+    html += `</table></div><div class="card"><h2>Recent Orders</h2>
+    <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Update</th></tr>`;
+
+    for (const o of orders.rows) {
+      html += `<tr>
+        <td>${o.id}</td>
+        <td>${esc(o.service_name)}</td>
+        <td>${o.quantity}</td>
+        <td>${money(o.charge)}</td>
+        <td>${esc(o.status)}</td>
+        <td>
+          <form method="POST" action="/admin/orders/${o.id}/status">
+            <select name="status">
+              ${["Pending","Processing","Completed","Partial","Cancelled"].map(v =>
+                `<option ${v === o.status ? "selected" : ""}>${v}</option>`).join("")}
+            </select>
+            <button>Save</button>
+          </form>
+        </td>
+      </tr>`;
+    }
+
+    html += `</table></div><div class="card"><h2>Support Tickets</h2>`;
+
+    for (const t of tickets.rows) {
+      html += `<div class="service">
+        <b>${esc(t.email)}</b>
+        <p>${esc(t.message)}</p>
+        <p>${esc(t.status)}</p>
+      </div>`;
+    }
+
+    html += `</div>`;
+    sendPage(res, "Admin", html, req.session.user);
+  } catch (e) {
+    console.error("Admin page error:", e);
+    res.status(500).send("Admin panel loading error");
   }
-
-  html += `</table></div><div class="card"><h2>Payment Requests</h2>
-  <table><tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>`;
-
-  for (const p of payments.rows) {
-    html += `<tr>
-    <td>${p.id}</td><td>${esc(p.email)}</td>
-    <td>${money(p.amount)}</td><td>${esc(p.utr)}</td>
-    <td>${esc(p.status)}</td>
-    <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>` : ""}</td>
-    </tr>`;
-  }
-
-  html += `</table></div><div class="card"><h2>Recent Orders</h2>
-  <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Status</th><th>Update</th></tr>`;
-
-  for (const o of orders.rows) {
-    html += `<tr><td>${o.id}</td><td>${esc(o.service_name)}</td>
-    <td>${o.quantity}</td><td>${esc(o.status)}</td><td>
-    <form method="POST" action="/admin/orders/${o.id}/status">
-    <select name="status">
-    ${["Pending","Processing","Completed","Partial","Cancelled"].map(v =>
-      `<option ${v === o.status ? "selected" : ""}>${v}</option>`).join("")}
-    </select><button>Save</button></form></td></tr>`;
-  }
-
-  html += `</table></div><div class="card"><h2>Support Tickets</h2>`;
-
-  for (const t of tickets.rows) {
-    html += `<div class="service"><b>${esc(t.email)}</b>
-    <p>${esc(t.message)}</p><p>${esc(t.status)}</p></div>`;
-  }
-
-  html += `</div>`;
-  sendPage(res, "Admin", html, req.session.user);
 });
 
 // ADMIN ADD SERVICE
 app.post("/admin/services", auth, admin, async (req, res) => {
-  const { category, name, description } = req.body;
-  const price = Number(req.body.price);
-  const min = Number(req.body.min_quantity);
-  const max = Number(req.body.max_quantity);
+  const category = String(req.body.category || "");
+  const name = String(req.body.name || "").trim();
+  const description = String(req.body.description || "");
+  const rate = Number(req.body.rate);
+  const min = Number(req.body.min);
+  const max = Number(req.body.max);
 
   if (!categories.some(c => c.name === category) ||
       !name || name.length > 150 ||
-      !Number.isFinite(price) || price < 0 ||
+      !Number.isFinite(rate) || rate < 0 ||
       !Number.isInteger(min) || !Number.isInteger(max) ||
       min < 1 || max < min) {
     return res.status(400).send("Invalid service information");
   }
 
-  await db.query(`
-    INSERT INTO services(category,name,description,price,min_quantity,max_quantity)
-    VALUES($1,$2,$3,$4,$5,$6)
-  `, [category, name, description || "", price, min, max]);
+  try {
+    await db.query(`
+      INSERT INTO services(category,name,description,rate,min,max,active,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,TRUE,NOW())
+    `, [category, name, description, rate, min, max]);
 
-  res.redirect("/admin");
+    res.redirect("/admin");
+  } catch (e) {
+    console.error("Add service error:", e);
+    res.status(500).send("Could not add service");
+  }
 });
 
 // ADMIN ENABLE / DISABLE SERVICE
 app.post("/admin/services/:id/toggle", auth, admin, async (req, res) => {
-  await db.query(
-    "UPDATE services SET active=NOT active WHERE id=$1",
-    [req.params.id]
-  );
-  res.redirect("/admin");
+  try {
+    await db.query(
+      "UPDATE services SET active=NOT active, updated_at=NOW() WHERE id=$1",
+      [req.params.id]
+    );
+
+    res.redirect("/admin");
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("Service update failed");
+  }
 });
 
 // ADMIN APPROVE PAYMENT
@@ -804,6 +927,7 @@ app.post("/admin/payments/:id/approve", auth, admin, async (req, res) => {
     res.redirect("/admin");
   } catch (e) {
     await client.query("ROLLBACK");
+    console.error("Payment approval error:", e);
     res.status(400).send("Payment approval failed");
   } finally {
     client.release();
@@ -815,14 +939,21 @@ app.post("/admin/orders/:id/status", auth, admin, async (req, res) => {
   const allowed = ["Pending", "Processing", "Completed", "Partial", "Cancelled"];
   const status = String(req.body.status || "");
 
-  if (!allowed.includes(status)) return res.status(400).send("Invalid status");
+  if (!allowed.includes(status)) {
+    return res.status(400).send("Invalid status");
+  }
 
-  await db.query(
-    "UPDATE orders SET status=$1 WHERE id=$2",
-    [status, req.params.id]
-  );
+  try {
+    await db.query(
+      "UPDATE orders SET status=$1 WHERE id=$2",
+      [status, req.params.id]
+    );
 
-  res.redirect("/admin");
+    res.redirect("/admin");
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("Order status update failed");
+  }
 });
 
 // HEALTH CHECK
@@ -843,6 +974,7 @@ app.use((req, res) => {
 // START SERVER
 async function start() {
   await initDB();
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log("ROYAL PANEL server running on port " + PORT);
   });
