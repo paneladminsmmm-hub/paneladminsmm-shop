@@ -1,17 +1,11 @@
 
 {
-  "name": "paneladminsmm-shop",
-  "version": "2.0.0",
-  "private": true,
-  "description": "PanelAdminSMM.shop social media reseller panel",
+  "name": "paneladmin-smm-shop",
+  "version": "1.0.0",
+  "description": "PanelAdminSMM.shop",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check src/provider.js && node --check public/app.js"
-  },
-  "engines": {
-    "node": "22.x"
+    "start": "node server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
