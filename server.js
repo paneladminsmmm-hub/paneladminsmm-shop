@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -17,7 +18,7 @@ if (!process.env.DATABASE_URL || !process.env.SESSION_SECRET) {
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 10,
+  max: 10
 });
 
 app.set("trust proxy", 1);
@@ -55,7 +56,7 @@ const categories = [
   { name: "Twitter", icon: "𝕏", color: "#555555" }
 ];
 
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({
+const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;",
   '"': "&quot;", "'": "&#39;"
 }[c]));
@@ -161,10 +162,11 @@ input,select,textarea{width:100%;padding:13px;border:1px solid #ddd;border-radiu
 button,.btn{background:#e92e48;color:white;border:0;border-radius:9px;padding:12px 18px;cursor:pointer;text-decoration:none;display:inline-block}
 button:hover,.btn:hover{opacity:.85}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-.category{background:white;padding:17px 8px;border-radius:13px;text-align:center;border:1px solid #eee;cursor:pointer}
-.category .icon{font-size:30px;display:block;margin-bottom:8px}
-.category strong{font-size:14px}
-.service{padding:15px;border:1px solid #eee;border-radius:10px;margin:10px 0}
+.category{background:white;padding:19px 8px;border-radius:13px;text-align:center;border:2px solid #eee;cursor:pointer;display:block;text-decoration:none;color:inherit;transition:.2s}
+.category:hover{border-color:#e92e48;transform:translateY(-2px)}
+.category .icon{font-size:34px;display:block;margin-bottom:9px}
+.category strong{font-size:15px}
+.service{padding:15px;border:1px solid #eee;border-radius:10px;margin:10px 0;background:white}
 .service h3{margin:0 0 8px}
 .small{color:#777;font-size:13px}
 table{width:100%;border-collapse:collapse;background:white}
@@ -172,20 +174,27 @@ td,th{padding:11px;border-bottom:1px solid #eee;text-align:left;font-size:13px}
 table{display:block;overflow-x:auto}
 .red{color:#e92e48;font-weight:bold}
 .notice{background:#fff4dc;padding:13px;border-radius:9px;margin:12px 0}
-@media(max-width:600px){header{padding:14px}.container{margin:15px auto}.card{padding:15px}}
+.back{display:inline-block;margin-bottom:14px;color:#e92e48;text-decoration:none;font-weight:bold}
+.platform-title{display:flex;align-items:center;gap:10px}
+.platform-title span{font-size:32px}
+.search-box{position:relative}
+.search-box input{padding:15px;border:2px solid #e5e7eb}
+.search-box input:focus{outline:none;border-color:#e92e48}
+@media(max-width:600px){header{padding:14px}.container{margin:15px auto}.card{padding:15px}.grid{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
 <header>
-<div class="logo">SMM.com</div>
+<div class="logo">ROYAL PANEL</div>
 <nav>
 ${user ? `
 <a href="/dashboard">Dashboard</a>
 <a href="/services">Services</a>
-<a href="/orders">Orders</a>
+<a href="/new-order">New Order</a>
+<a href="/orders">My Orders</a>
 <a href="/add-funds">Add Funds</a>
 <a href="/support">Support</a>
-${user.role === "admin" ? '<a href="/admin">Admin</a>' : ''}
+${user.role === "admin" ? '<a href="/admin">Admin Panel</a>' : ''}
 <a href="/logout">Logout</a>
 ` : '<a href="/login">Login</a><a href="/register">Register</a>'}
 </nav>
@@ -204,12 +213,11 @@ app.get("/", (req, res) => {
 
   sendPage(res, "Welcome", `
   <div class="card" style="text-align:center;padding:45px 15px">
-    <h1>Welcome to <span class="red">SMM.com</span></h1>
+    <h1>Welcome to <span class="red">ROYAL PANEL</span></h1>
     <p>Social Media Services Management Panel</p>
     <a class="btn" href="/register">Create Account</a>
     <a class="btn" href="/login">Login</a>
-  </div>
-  `);
+  </div>`);
 });
 
 // REGISTER
@@ -238,7 +246,6 @@ app.post("/register", async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 12);
-
     await db.query(
       "INSERT INTO users(name,email,password) VALUES($1,$2,$3)",
       [name, email, hash]
@@ -316,7 +323,7 @@ app.get("/dashboard", auth, async (req, res) => {
   </div>
   <div class="card">
   <h2>Quick Actions</h2>
-  <a class="btn" href="/services">New Order</a>
+  <a class="btn" href="/new-order">New Order</a>
   <a class="btn" href="/orders">Order History</a>
   <a class="btn" href="/add-funds">Add Funds</a>
   </div>
@@ -347,11 +354,9 @@ app.get("/services", auth, async (req, res) => {
   <div class="grid">`;
 
   for (const cat of categories) {
-    html += `<a href="/services?category=${encodeURIComponent(cat.name)}" style="text-decoration:none;color:inherit">
-    <div class="category">
-    <span class="icon">${cat.icon}</span>
-    <strong>${cat.name}</strong>
-    </div></a>`;
+    html += `<a class="category" href="/new-order?category=${encodeURIComponent(cat.name)}">
+      <span class="icon">${cat.icon}</span><strong>${cat.name}</strong>
+    </a>`;
   }
 
   html += `</div><div class="card"><h2>${selected ? esc(selected) + " Services" : "Available Services"}</h2>`;
@@ -368,7 +373,7 @@ app.get("/services", auth, async (req, res) => {
       <p class="small">${esc(s.category)} · ${esc(s.description)}</p>
       <p>Price: <b>${money(s.price)} / 1000</b></p>
       <p class="small">Minimum: ${s.min_quantity} | Maximum: ${s.max_quantity}</p>
-      <a class="btn" href="/new-order/${s.id}">Order Now</a>
+      <a class="btn" href="/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}">Order Now</a>
     </div>`;
   }
 
@@ -376,7 +381,127 @@ app.get("/services", auth, async (req, res) => {
   sendPage(res, "Services", html, req.session.user);
 });
 
-// NEW ORDER
+// NEW ORDER - PLATFORM SELECTION + CATEGORY SEARCH
+app.get("/new-order", auth, async (req, res) => {
+  const selected = String(req.query.category || "").trim();
+  const search = String(req.query.search || "").trim();
+  const serviceId = String(req.query.service || "").trim();
+
+  if (selected && !categories.some(c => c.name === selected)) {
+    return res.status(400).send("Invalid platform");
+  }
+
+  if (!selected) {
+    let html = `
+    <div class="card">
+      <h2>Place New Order</h2>
+      <p>Select your social media platform</p>
+      <div class="search-box">
+        <input id="platformSearch" placeholder="🔍 Search platform...">
+      </div>
+    </div>
+    <div class="grid" id="platformGrid">`;
+
+    for (const cat of categories) {
+      const count = await db.query(
+        "SELECT COUNT(*) FROM services WHERE active=TRUE AND LOWER(TRIM(category))=LOWER($1)",
+        [cat.name]
+      );
+
+      html += `
+      <a class="category" data-platform="${cat.name.toLowerCase()}"
+         href="/new-order?category=${encodeURIComponent(cat.name)}">
+        <span class="icon">${cat.icon}</span>
+        <strong>${cat.name}</strong>
+        <p class="small">${count.rows[0].count} Services</p>
+      </a>`;
+    }
+
+    html += `</div>
+    <script>
+    document.getElementById("platformSearch").addEventListener("input", function(){
+      const q=this.value.toLowerCase();
+      document.querySelectorAll("#platformGrid .category").forEach(el=>{
+        el.style.display=el.dataset.platform.includes(q)?"block":"none";
+      });
+    });
+    </script>`;
+
+    return sendPage(res, "New Order", html, req.session.user);
+  }
+
+  const cat = categories.find(c => c.name === selected);
+
+  const result = await db.query(`
+    SELECT * FROM services
+    WHERE active=TRUE
+    AND LOWER(TRIM(category))=LOWER($1)
+    AND ($2='' OR name ILIKE $3 OR description ILIKE $3)
+    ORDER BY id DESC
+  `, [selected, search, `%${search}%`]);
+
+  let html = `
+  <div class="card">
+    <a class="back" href="/new-order">← All Platforms</a>
+    <div class="platform-title">
+      <span>${cat.icon}</span>
+      <h2>${esc(cat.name)} Services</h2>
+    </div>
+    <form method="GET" action="/new-order">
+      <input type="hidden" name="category" value="${esc(selected)}">
+      <div class="search-box">
+        <input name="search" placeholder="🔍 Search ${esc(selected)} services..." value="${esc(search)}">
+      </div>
+      <button type="submit">Search Services</button>
+      <a class="btn" href="/new-order?category=${encodeURIComponent(selected)}">Show All</a>
+    </form>
+  </div>
+  `;
+
+  if (!result.rows.length) {
+    html += `<div class="card"><p>No active ${esc(selected)} services found.</p><p class="small">Admin Panel में इस platform की services add या enable करें।</p></div>`;
+  }
+
+  for (const s of result.rows) {
+    html += `
+    <div class="service">
+      <h3>${esc(s.name)}</h3>
+      <p class="small">${esc(s.description)}</p>
+      <p>Price: <b>${money(s.price)} / 1000</b></p>
+      <p class="small">Minimum: ${s.min_quantity} | Maximum: ${s.max_quantity}</p>
+      <a class="btn" href="/new-order?category=${encodeURIComponent(selected)}&service=${s.id}">Select Service</a>
+    </div>`;
+  }
+
+  if (serviceId) {
+    const chosen = await db.query(
+      "SELECT * FROM services WHERE id=$1 AND active=TRUE AND LOWER(TRIM(category))=LOWER($2)",
+      [serviceId, selected]
+    );
+
+    if (chosen.rows.length) {
+      const s = chosen.rows[0];
+
+      html += `
+      <div class="card">
+        <h2>Place Order</h2>
+        <h3>${esc(s.name)}</h3>
+        <p>Price: ${money(s.price)} / 1000</p>
+        <form method="POST" action="/new-order/${s.id}">
+          <label>Post Profile Link</label>
+          <input name="link" type="url" placeholder="https://..." required>
+          <label>Quantity</label>
+          <input name="quantity" type="number" min="${s.min_quantity}" max="${s.max_quantity}" required>
+          <button type="submit">Place Order</button>
+        </form>
+      </div>`;
+    }
+  }
+
+  sendPage(res, "New Order", html, req.session.user);
+});
+
+// OLD ORDER URL SUPPORT
 app.get("/new-order/:id", auth, async (req, res) => {
   const result = await db.query(
     "SELECT * FROM services WHERE id=$1 AND active=TRUE",
@@ -386,23 +511,10 @@ app.get("/new-order/:id", auth, async (req, res) => {
   if (!result.rows.length) return res.status(404).send("Service not found");
 
   const s = result.rows[0];
-
-  sendPage(res, "New Order", `
-  <div class="card">
-  <h2>New Order</h2>
-  <h3>${esc(s.category)} - ${esc(s.name)}</h3>
-  <p>Price: ${money(s.price)} / 1000</p>
-  <form method="POST" action="/new-order/${s.id}">
-  <label>Link / URL</label>
-  <input name="link" type="url" placeholder="https://..." required>
-  <label>Quantity</label>
-  <input name="quantity" type="number" min="${s.min_quantity}" max="${s.max_quantity}" required>
-  <button>Submit Order</button>
-  </form>
-  </div>
-  `, req.session.user);
+  res.redirect(`/new-order?category=${encodeURIComponent(s.category)}&service=${s.id}`);
 });
 
+// PLACE ORDER
 app.post("/new-order/:id", auth, async (req, res) => {
   const client = await db.connect();
 
@@ -450,12 +562,9 @@ app.post("/new-order/:id", auth, async (req, res) => {
 
     await client.query("COMMIT");
     res.redirect("/orders");
-
   } catch (e) {
     await client.query("ROLLBACK");
-    res.status(400).send(
-      `${esc(e.message)} <a href="/services">Go back</a>`
-    );
+    res.status(400).send(`${esc(e.message)} <a href="/new-order">Go back</a>`);
   } finally {
     client.release();
   }
@@ -473,12 +582,9 @@ app.get("/orders", auth, async (req, res) => {
 
   for (const o of result.rows) {
     html += `<tr>
-    <td>#${o.id}</td>
-    <td>${esc(o.service_name)}</td>
-    <td>${o.quantity}</td>
-    <td>${money(o.charge)}</td>
-    <td>${esc(o.status)}</td>
-    </tr>`;
+    <td>#${o.id}</td><td>${esc(o.service_name)}</td>
+    <td>${o.quantity}</td><td>${money(o.charge)}</td>
+    <td>${esc(o.status)}</td></tr>`;
   }
 
   html += `</table></div>`;
@@ -501,8 +607,7 @@ app.get("/add-funds", auth, (req, res) => {
   <input name="utr" minlength="6" maxlength="100" required>
   <button>Submit Payment Request</button>
   </form>
-  </div>
-  `, req.session.user);
+  </div>`, req.session.user);
 });
 
 app.post("/add-funds", auth, async (req, res) => {
@@ -536,8 +641,7 @@ app.get("/support", auth, (req, res) => {
   <textarea name="message" placeholder="Write your message..." required maxlength="2000"></textarea>
   <button>Send Message</button>
   </form>
-  </div>
-  `, req.session.user);
+  </div>`, req.session.user);
 });
 
 app.post("/support", auth, async (req, res) => {
@@ -581,7 +685,7 @@ app.get("/admin", auth, admin, async (req, res) => {
   <select name="category" required>
   ${categories.map(c => `<option value="${c.name}">${c.icon} ${c.name}</option>`).join("")}
   </select>
-  <input name="name" placeholder="Service Name" required>
+  <input name="name" placeholder="Service Name" required maxlength="150">
   <input name="description" placeholder="Description">
   <input name="price" type="number" min="0" step="0.01" placeholder="Price per 1000" required>
   <input name="min_quantity" type="number" min="1" value="100" required>
@@ -597,11 +701,9 @@ app.get("/admin", auth, admin, async (req, res) => {
     html += `<tr>
     <td>${s.id}</td><td>${esc(s.category)}</td>
     <td>${esc(s.name)}</td><td>${money(s.price)}</td>
-    <td>
-    <form method="POST" action="/admin/services/${s.id}/toggle">
+    <td><form method="POST" action="/admin/services/${s.id}/toggle">
     <button>${s.active ? "Disable" : "Enable"}</button>
-    </form>
-    </td></tr>`;
+    </form></td></tr>`;
   }
 
   html += `</table></div><div class="card"><h2>Payment Requests</h2>
@@ -612,10 +714,8 @@ app.get("/admin", auth, admin, async (req, res) => {
     <td>${p.id}</td><td>${esc(p.email)}</td>
     <td>${money(p.amount)}</td><td>${esc(p.utr)}</td>
     <td>${esc(p.status)}</td>
-    <td>${p.status === "Pending" ? `
-    <form method="POST" action="/admin/payments/${p.id}/approve">
-    <button>Approve</button></form>` : ""}
-    </td></tr>`;
+    <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>` : ""}</td>
+    </tr>`;
   }
 
   html += `</table></div><div class="card"><h2>Recent Orders</h2>
@@ -639,7 +739,6 @@ app.get("/admin", auth, admin, async (req, res) => {
   }
 
   html += `</div>`;
-
   sendPage(res, "Admin", html, req.session.user);
 });
 
@@ -668,10 +767,10 @@ app.post("/admin/services", auth, admin, async (req, res) => {
 
 // ADMIN ENABLE / DISABLE SERVICE
 app.post("/admin/services/:id/toggle", auth, admin, async (req, res) => {
-  await db.query(`
-    UPDATE services SET active=NOT active WHERE id=$1
-  `, [req.params.id]);
-
+  await db.query(
+    "UPDATE services SET active=NOT active WHERE id=$1",
+    [req.params.id]
+  );
   res.redirect("/admin");
 });
 
@@ -744,9 +843,8 @@ app.use((req, res) => {
 // START SERVER
 async function start() {
   await initDB();
-
   app.listen(PORT, "0.0.0.0", () => {
-    console.log("SMM.com server running on port " + PORT);
+    console.log("ROYAL PANEL server running on port " + PORT);
   });
 }
 
@@ -754,4 +852,3 @@ start().catch(err => {
   console.error("Server startup failed:", err);
   process.exit(1);
 });
-
