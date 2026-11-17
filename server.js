@@ -582,10 +582,9 @@ app.post("/new-order", requireLogin, async (req, res) => {
     const user = userResult.rows[0];
     const service = serviceResult.rows[0];
 
-    if (quantity < Number(service.min) || quantity > Number(service.max)) {
-  throw new Error(`Quantity must be between ${service.min} and ${service.max}.`);
-  if (quantity < 100 || quantity > 1000000) {
-  throw new Error("Quantity must be between 100 and 1000000.");
+    
+  if (!Number.isInteger(quantity) || quantity < 100 || quantity > 10000000) {
+  throw new Error("Quantity must be between 100 and 10000000.");
   }
     }
 
