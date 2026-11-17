@@ -596,8 +596,94 @@ app.get("/services", requireLogin, async (req, res) => {
   }
 });
 
+
 app.get("/new-order", requireLogin, async (req, res) => {
-  const services = await db("SELECT * FROM services WHERE active=TRUE ORDER BY name");
+  try {
+    const search = String(req.query.search || "").trim().slice(0, 100);
+
+    let result;
+
+    if (search) {
+      result = await db(`
+        SELECT * FROM services
+        WHERE active = TRUE
+          AND (
+            name ILIKE $1
+            OR category ILIKE $1
+            OR description ILIKE $1
+            OR provider_id ILIKE $1
+          )
+        ORDER BY name
+        LIMIT 2000
+      `, [`%${search}%`]);
+    } else {
+      result = await db(`
+        SELECT * FROM services
+        WHERE active = TRUE
+        ORDER BY name
+        LIMIT 2000
+      `);
+    }
+
+    const services = result.rows;
+
+    res.send(page("New Order", `
+      <div class="card">
+        <h2>Place New Order</h2>
+
+        <form method="GET" action="/new-order">
+          <label>Search Service</label>
+          <input
+            type="text"
+            name="search"
+            value="${escapeHtml(search)}"
+            placeholder="Search Instagram, Facebook, YouTube..."
+          >
+          <button type="submit">Search</button>
+          <a href="/new-order">Clear</a>
+        </form>
+
+        <p>${services.length} services found</p>
+
+        <form method="POST" action="/new-order">
+          <label>Select Service</label>
+
+          <select name="service_id" required>
+            <option value="">Choose a service</option>
+            ${services.map(s => `
+              <option value="${s.id}">
+                ${escapeHtml(s.name)} - ₹${Number(s.rate).toFixed(2)}
+              </option>
+            `).join("")}
+          </select>
+
+          <label>Post / Profile Link</label>
+          <input
+            name="link"
+            type="url"
+            placeholder="Post Profile Link"
+            required
+          >
+
+          <label>Quantity</label>
+          <input
+            name="quantity"
+            type="number"
+            placeholder="Quantity"
+            min="1"
+            required
+          >
+
+          <button type="submit">Place Order</button>
+        </form>
+      </div>
+    `, req.session.user));
+
+  } catch (error) {
+    console.error("New Order Error:", error);
+    res.status(500).send("Unable to load services. Please try again.");
+  }
+});
 
   res.send(page("New Order", `
   <div class="card">
