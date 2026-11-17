@@ -1196,7 +1196,8 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Add service error:", error);
     res.status(500).send("Could not add service.");
-  }
+    {
+      console.error("Database details:", error.message, error.code, error.detail);
 });
 
 // DISABLE ALL SERVICES
