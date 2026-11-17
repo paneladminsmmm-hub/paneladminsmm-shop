@@ -478,10 +478,10 @@ app.get("/new-order", requireLogin, async (req, res) => {
 
           <label>Quantity</label>
           <input name="quantity" id="quantityInput"
-            type="number" min="1" step="1"
-            placeholder="Enter quantity" required>
-
-          <div style="
+  type="number" min="100" max="1000000" step="1"
+  placeholder="Minimum 100 - Maximum 1000000" required>
+        
+         <div style="
             background:#f3f4f6;
             color:#111;
             padding:15px;
