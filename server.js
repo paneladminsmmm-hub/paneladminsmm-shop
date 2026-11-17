@@ -417,6 +417,7 @@ app.get("/services", requireLogin, async (req, res) => {
   }
 });
 
+
 app.get("/new-order", requireLogin, async (req, res) => {
   try {
     const search = String(req.query.search || "").trim().slice(0, 100);
@@ -446,7 +447,7 @@ app.get("/new-order", requireLogin, async (req, res) => {
     const options = Object.entries(groups).map(([category, services]) => `
       <optgroup label="${esc(category)}">
         ${services.map(s => `
-          <option value="${s.id}">
+          <option value="${s.id}" data-rate="${Number(s.rate)}">
             ${esc(s.name)} | ₹${Number(s.rate).toFixed(2)}/1K
           </option>
         `).join("")}
@@ -457,31 +458,89 @@ app.get("/new-order", requireLogin, async (req, res) => {
       <div class="card">
         <form method="GET">
           <label>Search Services</label>
-          <input name="search" value="${esc(search)}" placeholder="Search Instagram, Facebook, YouTube...">
+          <input name="search" value="${esc(search)}"
+            placeholder="Search Instagram, Facebook, YouTube...">
           <button>Search</button>
         </form>
       </div>
+
       <div class="card">
         <form method="POST">
           <label>Select Service</label>
-          <select name="service_id" required>
+          <select name="service_id" id="serviceSelect" required>
             <option value="">Choose a service</option>
             ${options}
           </select>
+
           <label>Post / Profile Link</label>
-          <input name="link" type="url" placeholder="https://" required>
+          <input name="link" type="url"
+            placeholder="https://" required>
+
           <label>Quantity</label>
-          <input name="quantity" type="number" min="1" required>
-          <button>Place Order</button>
+          <input name="quantity" id="quantityInput"
+            type="number" min="1" step="1"
+            placeholder="Enter quantity" required>
+
+          <div style="
+            background:#f3f4f6;
+            color:#111;
+            padding:15px;
+            border-radius:10px;
+            margin:15px 0;
+          ">
+            <div style="font-size:14px">Total Price</div>
+            <div id="totalPrice"
+              style="font-size:26px;font-weight:bold;margin-top:5px">
+              ₹0.00
+            </div>
+            <small id="priceDetails">Select service and quantity</small>
+          </div>
+
+          <button type="submit">Place Order</button>
         </form>
       </div>
+
       ${result.rows.length ? "" : "<p>No services found.</p>"}
+
+      <script>
+        (function () {
+          const serviceSelect = document.getElementById("serviceSelect");
+          const quantityInput = document.getElementById("quantityInput");
+          const totalPrice = document.getElementById("totalPrice");
+          const priceDetails = document.getElementById("priceDetails");
+
+          function updatePrice() {
+            const option = serviceSelect.options[serviceSelect.selectedIndex];
+            const rate = Number(option.dataset.rate);
+            const quantity = Number(quantityInput.value);
+
+            if (!option.value || !Number.isFinite(rate) ||
+                !Number.isInteger(quantity) || quantity < 1) {
+              totalPrice.textContent = "₹0.00";
+              priceDetails.textContent = "Select service and quantity";
+              return;
+            }
+
+            const total = (rate * quantity) / 1000;
+
+            totalPrice.textContent = "₹" + total.toFixed(2);
+            priceDetails.textContent =
+              quantity.toLocaleString("en-IN") +
+              " × ₹" + rate.toFixed(2) + " per 1,000";
+          }
+
+          serviceSelect.addEventListener("change", updatePrice);
+          quantityInput.addEventListener("input", updatePrice);
+        })();
+      </script>
     `, req.session.user));
+
   } catch (error) {
     console.error(error);
     res.status(500).send("New Order page error");
   }
 });
+
 
 app.post("/new-order", requireLogin, async (req, res) => {
   const client = await pool.connect();
