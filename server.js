@@ -67,11 +67,9 @@ function requireLogin(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
-
   if (!req.session.user.is_admin) {
     return res.status(403).send("Admin access required");
   }
-
   next();
 }
 
@@ -109,12 +107,12 @@ header h2{margin:0;color:#ff454f}
 nav{display:flex;gap:8px;flex-wrap:wrap;padding:12px;background:#191e2b;justify-content:center}
 a{color:#ff5964;text-decoration:none}
 nav a{padding:9px 11px;background:#252c3c;border-radius:7px;color:white;font-size:13px}
-main{max-width:950px;margin:22px auto;padding:0 14px}
+main{max-width:1100px;margin:22px auto;padding:0 14px}
 .card{background:#1b2130;border:1px solid #30394c;border-radius:12px;padding:17px;margin-bottom:15px}
 input,select,textarea{width:100%;padding:12px;margin:7px 0 13px;border:1px solid #414b60;border-radius:7px;background:#101723;color:white}
 button,.btn{display:inline-block;border:0;background:#e63946;color:white;padding:12px 16px;border-radius:7px;cursor:pointer}
 button:disabled{opacity:.5;cursor:not-allowed}
-table{width:100%;border-collapse:collapse;min-width:550px}
+table{width:100%;border-collapse:collapse;min-width:750px}
 th,td{padding:10px;border-bottom:1px solid #384154;text-align:left;font-size:13px}
 .tablewrap{overflow-x:auto}
 small{color:#aeb8c9}
@@ -246,7 +244,6 @@ async function setupDatabase() {
 
   const adminEmail = String(process.env.ADMIN_EMAIL || "")
     .trim().toLowerCase();
-
   const adminUsername = String(process.env.ADMIN_USERNAME || "").trim();
   const adminPassword = String(process.env.ADMIN_PASSWORD || "");
 
@@ -269,12 +266,7 @@ async function setupDatabase() {
         UPDATE users
         SET email=$1, username=$2, password_hash=$3, is_admin=TRUE
         WHERE id=$4
-      `, [
-        adminEmail,
-        adminUsername,
-        hash,
-        existing.rows[0].id
-      ]);
+      `, [adminEmail, adminUsername, hash, existing.rows[0].id]);
     } else {
       await db(`
         INSERT INTO users
@@ -460,9 +452,7 @@ app.get("/services", requireLogin, async (req, res) => {
       <div class="card">
         <h3>${esc(row.category)}</h3>
         <p>${esc(row.total)} services</p>
-        <a class="btn" href="/new-order?search=${encodeURIComponent(row.category)}">
-          View Services
-        </a>
+        <a class="btn" href="/new-order?search=${encodeURIComponent(row.category)}">View Services</a>
       </div>
     `).join("");
 
@@ -847,10 +837,23 @@ app.get("/admin", requireAdmin, async (req, res) => {
   }
 });
 
-// ADMIN SERVICES PAGE
+// ADMIN SERVICES PAGE WITH SEARCH AND EDIT
 app.get("/admin/services", requireAdmin, async (req, res) => {
   try {
-    const result = await db("SELECT * FROM services ORDER BY category,name");
+    const search = String(req.query.search || "").trim().slice(0, 100);
+
+    const result = search
+      ? await db(`
+          SELECT * FROM services
+          WHERE name ILIKE $1
+             OR category ILIKE $1
+             OR COALESCE(provider_id,'') ILIKE $1
+          ORDER BY id DESC LIMIT 300
+        `, [`%${search}%`])
+      : await db(`
+          SELECT * FROM services
+          ORDER BY id DESC LIMIT 300
+        `);
 
     const rows = result.rows.map(s => `
       <tr>
@@ -859,16 +862,28 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <td>${esc(s.category)}</td>
         <td>${esc(s.provider_id || "-")}</td>
         <td>₹${Number(s.rate).toFixed(2)}</td>
+        <td>${s.min}</td>
+        <td>${s.max}</td>
         <td>${s.active ? "Active" : "Off"}</td>
         <td>
-          <form method="POST" action="/admin/services/${s.id}/toggle">
-            <button>${s.active ? "Disable" : "Enable"}</button>
+          <a class="btn" href="/admin/services/${s.id}/edit">Edit</a>
+          <form method="POST" action="/admin/services/${s.id}/toggle" style="margin-top:6px">
+            <button type="submit">${s.active ? "Disable" : "Enable"}</button>
           </form>
         </td>
       </tr>
     `).join("");
 
     res.send(page("Manage Services", `
+      <div class="card">
+        <h3>Search Existing Service</h3>
+        <form method="GET" action="/admin/services">
+          <input name="search" value="${esc(search)}"
+            placeholder="Search Provider ID, e.g. 13216">
+          <button type="submit">Search</button>
+        </form>
+      </div>
+
       <div class="card">
         <h3>Bulk Service Control</h3>
         <p>एक क्लिक में सभी Services बंद करें।</p>
@@ -911,7 +926,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <label>Description</label>
           <textarea name="description"></textarea>
 
-          <button type="submit">Add Service</button>
+          <button type="submit">Add / Update Service</button>
         </form>
       </div>
 
@@ -919,19 +934,150 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <table>
           <tr>
             <th>ID</th><th>Name</th><th>Category</th>
-            <th>Provider ID</th><th>Rate</th><th>Status</th><th>Action</th>
+            <th>Provider ID</th><th>Rate</th><th>Min</th>
+            <th>Max</th><th>Status</th><th>Action</th>
           </tr>
           ${rows}
         </table>
+        ${result.rows.length ? "" : "<p>No services found.</p>"}
       </div>
     `, req.session.user));
+
   } catch (error) {
     console.error("Services admin error:", error);
     res.status(500).send("Services admin error");
   }
 });
 
-// ADD SERVICE - FIXED
+// EDIT SERVICE PAGE
+app.get("/admin/services/:id/edit", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).send("Invalid service ID.");
+    }
+
+    const result = await db(
+      "SELECT * FROM services WHERE id=$1",
+      [id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).send("Service not found.");
+    }
+
+    const s = result.rows[0];
+
+    res.send(page("Edit Service", `
+      <div class="card">
+        <h3>Update Existing Service</h3>
+        <p>Database Service ID: ${s.id}</p>
+
+        <form method="POST" action="/admin/services/${s.id}/edit">
+          <label>Service Name</label>
+          <input name="name" value="${esc(s.name)}" required>
+
+          <label>Category</label>
+          <input name="category" value="${esc(s.category)}" required>
+
+          <label>Provider Service ID</label>
+          <input name="provider_id" value="${esc(s.provider_id)}" required>
+
+          <label>Rate per 1000 (₹)</label>
+          <input name="rate" type="number" step="0.0001"
+            min="0.0001" value="${Number(s.rate)}" required>
+
+          <label>Minimum</label>
+          <input name="min" type="number" min="100"
+            max="10000000" value="${s.min}" required>
+
+          <label>Maximum</label>
+          <input name="max" type="number" min="100"
+            max="10000000" value="${s.max}" required>
+
+          <label>Description</label>
+          <textarea name="description">${esc(s.description)}</textarea>
+
+          <button type="submit">Save Changes</button>
+          <a class="btn" href="/admin/services">Cancel</a>
+        </form>
+      </div>
+    `, req.session.user));
+
+  } catch (error) {
+    console.error("Edit service page error:", error);
+    res.status(500).send("Could not open edit service.");
+  }
+});
+
+// UPDATE EXISTING SERVICE
+app.post("/admin/services/:id/edit", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const name = String(req.body.name || "").trim();
+    const category = String(req.body.category || "").trim();
+    const providerId = String(req.body.provider_id || "").trim();
+    const rate = Number(req.body.rate);
+    const min = Number(req.body.min);
+    const max = Number(req.body.max);
+    const description = String(req.body.description || "").trim();
+
+    if (
+      !Number.isInteger(id) || id < 1 ||
+      !name || !category || !providerId ||
+      !Number.isFinite(rate) || rate <= 0 ||
+      !Number.isInteger(min) || min < 100 ||
+      !Number.isInteger(max) || max < min ||
+      max > 10000000
+    ) {
+      return res.status(400).send("Invalid service details.");
+    }
+
+    const result = await db(`
+      UPDATE services
+      SET provider_id=$1,
+          name=$2,
+          category=$3,
+          rate=$4,
+          min=$5,
+          max=$6,
+          description=$7
+      WHERE id=$8
+      RETURNING id
+    `, [
+      providerId,
+      name,
+      category,
+      rate,
+      min,
+      max,
+      description,
+      id
+    ]);
+
+    if (!result.rowCount) {
+      return res.status(404).send("Service not found.");
+    }
+
+    console.log("SERVICE UPDATED:", id);
+    res.redirect("/admin/services");
+
+  } catch (error) {
+    console.error("Update service error:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).send(
+        "This Provider Service ID already belongs to another service."
+      );
+    }
+
+    res.status(500).send("Could not update service.");
+  }
+});
+
+// ADD SERVICE OR UPDATE EXISTING PROVIDER ID
 app.post("/admin/services", requireAdmin, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
@@ -943,47 +1089,55 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
     const description = String(req.body.description || "").trim();
 
     if (
-      !name ||
-      !category ||
-      !providerId ||
-      !Number.isFinite(rate) ||
-      rate <= 0 ||
+      !name || !category || !providerId ||
+      !Number.isFinite(rate) || rate <= 0 ||
       !Number.isInteger(min) ||
       !Number.isInteger(max) ||
-      min < 100 ||
-      max < min ||
-      max > 10000000
+      min < 100 || max < min || max > 10000000
     ) {
-      return res.status(400).send("Invalid service details. Check all fields.");
+      return res.status(400).send("Invalid service details.");
     }
 
-    const result = await db(`
-      INSERT INTO services
-      (provider_id,name,category,rate,min,max,description,active)
-      VALUES($1,$2,$3,$4,$5,$6,$7,TRUE)
-      RETURNING id
-    `, [
-      providerId,
-      name,
-      category,
-      rate,
-      min,
-      max,
-      description
-    ]);
+    const existing = await db(
+      "SELECT id FROM services WHERE provider_id=$1 LIMIT 1",
+      [providerId]
+    );
 
-    console.log("SERVICE ADDED:", result.rows[0].id);
-    return res.redirect("/admin/services");
+    if (existing.rowCount) {
+      await db(`
+        UPDATE services
+        SET name=$1,
+            category=$2,
+            rate=$3,
+            min=$4,
+            max=$5,
+            description=$6,
+            active=TRUE
+        WHERE id=$7
+      `, [
+        name, category, rate, min, max,
+        description, existing.rows[0].id
+      ]);
+
+      console.log("EXISTING SERVICE UPDATED:", existing.rows[0].id);
+    } else {
+      await db(`
+        INSERT INTO services
+        (provider_id,name,category,rate,min,max,description,active)
+        VALUES($1,$2,$3,$4,$5,$6,$7,TRUE)
+      `, [
+        providerId, name, category, rate,
+        min, max, description
+      ]);
+
+      console.log("NEW SERVICE ADDED:", providerId);
+    }
+
+    res.redirect("/admin/services");
 
   } catch (error) {
-    console.error("ADD SERVICE ERROR:", error);
-    console.error("ERROR MESSAGE:", error.message);
-    console.error("ERROR CODE:", error.code);
-    console.error("ERROR DETAIL:", error.detail);
-
-    return res.status(500).send(
-      "Could not add service: " + esc(error.message)
-    );
+    console.error("Add/update service error:", error);
+    res.status(500).send("Could not add or update service.");
   }
 });
 
@@ -1098,7 +1252,6 @@ app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
     res.redirect("/admin/payments");
   } catch (error) {
     if (transactionStarted) await client.query("ROLLBACK");
-
     console.error("Approve payment error:", error);
     res.status(400).send(esc(error.message));
   } finally {
