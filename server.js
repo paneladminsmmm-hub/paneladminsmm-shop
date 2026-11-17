@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -106,6 +107,12 @@ async function setupDatabase() {
     )
   `);
 
+  // पुराने database में भी provider_order_id column सुनिश्चित करें
+  await db(`
+    ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS provider_order_id TEXT
+  `);
+
   await db(`
     CREATE TABLE IF NOT EXISTS payments (
       id SERIAL PRIMARY KEY,
@@ -148,7 +155,7 @@ function page(title, content, user = null) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} - PanelAdminSMM.shop</title>
+<title>${escapeHtml(title)} - PanelAdminSMM.shop</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#101010;color:white;font-family:Arial,sans-serif}
@@ -197,6 +204,123 @@ function requireAdmin(req, res, next) {
 
 function message(res, text, user = null) {
   res.send(page("Message", `<div class="card">${text}<p><a href="/dashboard">Go Dashboard</a></p></div>`, user));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+
+/* ================================
+   AUTOMATIC PROVIDER ORDER STATUS
+================================ */
+
+let statusSyncRunning = false;
+
+function normalizeProviderStatus(data) {
+  let rawStatus = data;
+
+  if (data && typeof data === "object") {
+    rawStatus =
+      data.status ??
+      data.order?.status ??
+      data.data?.status ??
+      "";
+  }
+
+  const status = String(rawStatus).trim().toLowerCase();
+
+  if (["completed", "complete", "success", "successful"].includes(status)) {
+    return "Completed";
+  }
+
+  if (["partial"].includes(status)) {
+    return "Partial";
+  }
+
+  if (["cancelled", "canceled", "cancel", "cancellation"].includes(status)) {
+    return "Cancelled";
+  }
+
+  if (["processing", "in progress", "inprogress", "running"].includes(status)) {
+    return "Processing";
+  }
+
+  if (["pending", "waiting"].includes(status)) {
+    return "Pending";
+  }
+
+  return null;
+}
+
+async function syncProviderOrderStatuses() {
+  if (statusSyncRunning) return;
+
+  if (typeof providerOrderStatus !== "function") {
+    return;
+  }
+
+  statusSyncRunning = true;
+
+  try {
+    const result = await db(`
+      SELECT id, provider_order_id, status
+      FROM orders
+      WHERE provider_order_id IS NOT NULL
+        AND status IN ('Pending', 'Processing', 'In Progress')
+      ORDER BY id DESC
+      LIMIT 100
+    `);
+
+    for (const order of result.rows) {
+      try {
+        const providerResult = await providerOrderStatus(
+          order.provider_order_id
+        );
+
+        const newStatus = normalizeProviderStatus(providerResult);
+
+        if (!newStatus) {
+          console.log(
+            "Unknown provider status for order:",
+            order.id
+          );
+          continue;
+        }
+
+        if (newStatus !== order.status) {
+          await db(`
+            UPDATE orders
+            SET status = $1
+            WHERE id = $2
+              AND provider_order_id = $3
+          `, [
+            newStatus,
+            order.id,
+            order.provider_order_id
+          ]);
+
+          console.log(
+            `Order ${order.id}: ${order.status} -> ${newStatus}`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `Provider status check failed for order ${order.id}:`,
+          error.message
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Order status sync error:", error.message);
+  } finally {
+    statusSyncRunning = false;
+  }
 }
 
 app.get("/", (req, res) => {
@@ -276,6 +400,7 @@ app.post("/login", async (req, res) => {
 
     req.session.regenerate(err => {
       if (err) return res.status(500).send("Session error");
+
       req.session.user = {
         id: u.id,
         username: u.username,
@@ -283,6 +408,7 @@ app.post("/login", async (req, res) => {
         balance: u.balance,
         is_admin: u.is_admin
       };
+
       res.redirect("/dashboard");
     });
   } catch (e) {
@@ -300,7 +426,7 @@ app.get("/dashboard", requireLogin, async (req, res) => {
 
   res.send(page("Dashboard", `
   <div class="card">
-  <h2>Welcome ${req.session.user.username}</h2>
+  <h2>Welcome ${escapeHtml(req.session.user.username)}</h2>
   <h1>₹${Number(u.rows[0].balance).toFixed(2)}</h1>
   <p>Available Wallet Balance</p>
   <p>Total Orders: ${orders.rows[0].count}</p>
@@ -308,7 +434,6 @@ app.get("/dashboard", requireLogin, async (req, res) => {
   <a href="/add-funds"><button>Add Funds</button></a>
   </div>`, req.session.user));
 });
-
 
 app.get("/services", requireLogin, async (req, res) => {
   try {
@@ -356,7 +481,6 @@ app.get("/services", requireLogin, async (req, res) => {
       platform: getPlatform(s)
     }));
 
-    // Search all platforms together
     if (search) {
       const term = search.toLowerCase();
 
@@ -371,6 +495,7 @@ app.get("/services", requireLogin, async (req, res) => {
     }
 
     const counts = {};
+
     for (const p of platforms) {
       counts[p.name] = p.name === "All"
         ? result.rows.length
@@ -537,26 +662,43 @@ app.post("/new-order", requireLogin, async (req, res) => {
 
     await client.query("COMMIT");
 
-    let providerOrder = null;
-
     if (typeof providerAddOrder === "function") {
       try {
-        const result = await providerAddOrder(service.provider_id, link, quantity);
-        providerOrder = result && result.order;
+        const result = await providerAddOrder(
+          service.provider_id,
+          link,
+          quantity
+        );
 
-        if (!providerOrder) throw new Error("Provider did not return order ID");
+        const providerOrder = result && result.order;
+
+        if (!providerOrder) {
+          throw new Error("Provider did not return order ID");
+        }
 
         await db(`
-          UPDATE orders SET provider_order_id=$1,status='Processing'
+          UPDATE orders
+          SET provider_order_id=$1,status='Processing'
           WHERE id=$2
         `, [String(providerOrder), order.rows[0].id]);
+
       } catch (e) {
-        await refundOrder(order.rows[0].id, req.session.user.id, charge);
-        return message(res, "Provider order failed. Your wallet has been refunded.", req.session.user);
+        await refundOrder(
+          order.rows[0].id,
+          req.session.user.id,
+          charge
+        );
+
+        return message(
+          res,
+          "Provider order failed. Your wallet has been refunded.",
+          req.session.user
+        );
       }
     }
 
     res.redirect("/orders");
+
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     message(res, escapeHtml(e.message), req.session.user);
@@ -567,17 +709,29 @@ app.post("/new-order", requireLogin, async (req, res) => {
 
 async function refundOrder(orderId, userId, amount) {
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
+
     const r = await client.query(
       "SELECT status FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE",
       [orderId, userId]
     );
+
     if (r.rows.length && r.rows[0].status !== "Refunded") {
-      await client.query("UPDATE users SET balance=balance+$1 WHERE id=$2", [amount, userId]);
-      await client.query("UPDATE orders SET status='Refunded' WHERE id=$1", [orderId]);
+      await client.query(
+        "UPDATE users SET balance=balance+$1 WHERE id=$2",
+        [amount, userId]
+      );
+
+      await client.query(
+        "UPDATE orders SET status='Refunded' WHERE id=$1",
+        [orderId]
+      );
     }
+
     await client.query("COMMIT");
+
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -590,17 +744,24 @@ app.get("/orders", requireLogin, async (req, res) => {
   const result = await db(`
     SELECT o.*,s.name AS service_name
     FROM orders o LEFT JOIN services s ON s.id=o.service_id
-    WHERE o.user_id=$1 ORDER BY o.id DESC LIMIT 200
+    WHERE o.user_id=$1
+    ORDER BY o.id DESC LIMIT 200
   `, [req.session.user.id]);
 
   res.send(page("Orders", `
   <div class="card"><h2>My Orders</h2>
-  <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
+  <div style="overflow-x:auto">
+  <table>
+  <tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
   ${result.rows.map(o => `<tr>
-  <td>${o.id}</td><td>${escapeHtml(o.service_name || "")}</td>
-  <td>${o.quantity}</td><td>₹${Number(o.charge).toFixed(2)}</td>
-  <td>${escapeHtml(o.status)}</td></tr>`).join("")}
-  </table></div>`, req.session.user));
+  <td>${o.id}</td>
+  <td>${escapeHtml(o.service_name || "")}</td>
+  <td>${o.quantity}</td>
+  <td>₹${Number(o.charge).toFixed(2)}</td>
+  <td>${escapeHtml(o.status)}</td>
+  </tr>`).join("")}
+  </table>
+  </div></div>`, req.session.user));
 });
 
 app.get("/add-funds", requireLogin, (req, res) => {
@@ -635,6 +796,7 @@ app.post("/add-funds", requireLogin, async (req, res) => {
     `, [req.session.user.id, amount, utr]);
 
     message(res, "Payment request submitted. Waiting for admin approval.", req.session.user);
+
   } catch (e) {
     message(res, "Payment request failed.", req.session.user);
   }
@@ -654,10 +816,14 @@ app.get("/support", requireLogin, (req, res) => {
 
 app.post("/support", requireLogin, async (req, res) => {
   const text = String(req.body.message || "").trim().slice(0, 2000);
-  if (!text) return message(res, "Please enter your message.", req.session.user);
+
+  if (!text) {
+    return message(res, "Please enter your message.", req.session.user);
+  }
 
   await db("INSERT INTO tickets(user_id,message) VALUES($1,$2)", [
-    req.session.user.id, text
+    req.session.user.id,
+    text
   ]);
 
   message(res, "Support ticket submitted.", req.session.user);
@@ -681,20 +847,24 @@ app.get("/admin", requireAdmin, async (req, res) => {
   <p>Active Services: ${services.rows[0].count}</p>
   <p>Open Tickets: ${tickets.rows[0].count}</p>
   </div>
+
   <div class="card">
   <h2>Service Management</h2>
   <form method="POST" action="/admin/sync">
   <button>Sync Services</button>
   </form>
   </div>
+
   <div class="card">
   <h2>Payment Requests</h2>
   <a href="/admin/payments">Manage Payments</a>
   </div>
+
   <div class="card">
   <h2>Orders</h2>
   <a href="/admin/orders">Manage Orders</a>
   </div>
+
   <div class="card">
   <h2>Support Tickets</h2>
   <a href="/admin/tickets">View Tickets</a>
@@ -709,7 +879,9 @@ app.post("/admin/sync", requireAdmin, async (req, res) => {
 
     const list = await providerServices();
 
-    if (!Array.isArray(list)) throw new Error("Invalid provider service response");
+    if (!Array.isArray(list)) {
+      throw new Error("Invalid provider service response");
+    }
 
     for (const s of list) {
       if (!s.service || !s.name) continue;
@@ -739,6 +911,7 @@ app.post("/admin/sync", requireAdmin, async (req, res) => {
     }
 
     message(res, `${list.length} provider services synchronized.`, req.session.user);
+
   } catch (e) {
     message(res, "Service sync failed: " + escapeHtml(e.message), req.session.user);
   }
@@ -753,6 +926,7 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
 
   res.send(page("Payments", `
   <div class="card"><h2>Payment Requests</h2>
+  <div style="overflow-x:auto">
   <table><tr><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
   ${r.rows.map(p => `<tr>
   <td>${escapeHtml(p.username)}</td>
@@ -760,13 +934,16 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
   <td>${escapeHtml(p.utr)}</td>
   <td>${escapeHtml(p.status)}</td>
   <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form><form method="POST" action="/admin/payments/${p.id}/reject"><button>Reject</button></form>` : "-"}</td>
-  </tr>`).join("")}</table></div>`, req.session.user));
+  </tr>`).join("")}</table>
+  </div></div>`, req.session.user));
 });
 
 app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
+
     const p = await client.query(
       "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
       [req.params.id]
@@ -788,6 +965,7 @@ app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
 
     await client.query("COMMIT");
     message(res, "Payment approved.", req.session.user);
+
   } catch (e) {
     await client.query("ROLLBACK");
     message(res, escapeHtml(e.message), req.session.user);
@@ -805,7 +983,17 @@ app.post("/admin/payments/:id/reject", requireAdmin, async (req, res) => {
   message(res, "Payment request rejected.", req.session.user);
 });
 
+/* ADMIN ORDER STATUS MANAGEMENT */
+
 app.get("/admin/orders", requireAdmin, async (req, res) => {
+  const allowed = [
+    "Pending",
+    "Processing",
+    "Completed",
+    "Partial",
+    "Cancelled"
+  ];
+
   const r = await db(`
     SELECT o.*,u.username,s.name AS service_name
     FROM orders o
@@ -815,14 +1003,79 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
   `);
 
   res.send(page("Admin Orders", `
-  <div class="card"><h2>All Orders</h2>
-  <table><tr><th>ID</th><th>User</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
-  ${r.rows.map(o => `<tr>
-  <td>${o.id}</td><td>${escapeHtml(o.username || "")}</td>
-  <td>${escapeHtml(o.service_name || "")}</td>
-  <td>${o.quantity}</td><td>₹${Number(o.charge).toFixed(2)}</td>
-  <td>${escapeHtml(o.status)}</td></tr>`).join("")}
-  </table></div>`, req.session.user));
+    <div class="card">
+      <h2>Manage All Orders</h2>
+      <div style="overflow-x:auto">
+      <table>
+        <tr>
+          <th>ID</th>
+          <th>Customer</th>
+          <th>Service</th>
+          <th>Quantity</th>
+          <th>Charge</th>
+          <th>Status</th>
+          <th>Update</th>
+        </tr>
+        ${r.rows.map(o => `
+          <tr>
+            <td>${o.id}</td>
+            <td>${escapeHtml(o.username || "")}</td>
+            <td>${escapeHtml(o.service_name || "")}</td>
+            <td>${o.quantity}</td>
+            <td>₹${Number(o.charge).toFixed(2)}</td>
+            <td>${escapeHtml(o.status)}</td>
+            <td>
+              <form method="POST" action="/admin/orders/${o.id}/status">
+                <select name="status" required>
+                  ${allowed.map(s => `
+                    <option value="${s}" ${o.status === s ? "selected" : ""}>
+                      ${s}
+                    </option>
+                  `).join("")}
+                </select>
+                <button type="submit">Update</button>
+              </form>
+            </td>
+          </tr>
+        `).join("")}
+      </table>
+      </div>
+    </div>
+  `, req.session.user));
+});
+
+app.post("/admin/orders/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const allowed = [
+      "Pending",
+      "Processing",
+      "Completed",
+      "Partial",
+      "Cancelled"
+    ];
+
+    const id = Number(req.params.id);
+    const status = String(req.body.status || "");
+
+    if (!Number.isInteger(id) || id < 1 || !allowed.includes(status)) {
+      return res.status(400).send("Invalid order status");
+    }
+
+    const result = await db(
+      "UPDATE orders SET status=$1 WHERE id=$2 RETURNING id",
+      [status, id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).send("Order not found");
+    }
+
+    res.redirect("/admin/orders");
+
+  } catch (error) {
+    console.error("Order status error:", error);
+    res.status(500).send("Unable to update order status");
+  }
 });
 
 app.get("/admin/tickets", requireAdmin, async (req, res) => {
@@ -855,20 +1108,18 @@ app.get("/terms", (req, res) => {
   </div>`, req.session.user));
 });
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[c]));
-}
-
 setupDatabase()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log("PanelAdminSMM.shop running on port " + PORT);
+
+      // Start automatic status checks after server starts.
+      syncProviderOrderStatuses();
+
+      // Check provider order status every 60 seconds.
+      setInterval(() => {
+        syncProviderOrderStatuses();
+      }, 60 * 1000);
     });
   })
   .catch(err => {
