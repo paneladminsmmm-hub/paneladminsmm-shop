@@ -730,7 +730,7 @@ app.get("/add-funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
       <h3>Scan QR & Pay</h3>
-      <p>Minimum Amount: ₹100</p>
+      <p>Minimum Amount: ₹10</p>
       <p>Maximum Amount: ₹2,000</p>
       <div style="text-align:center;background:white;padding:15px;border-radius:10px;margin:15px 0">
         <img src="/public/payment-qr.png" alt="Payment QR Code"
@@ -739,9 +739,9 @@ app.get("/add-funds", requireLogin, (req, res) => {
       <p>Scan this QR using any UPI app.</p>
       <form method="POST">
         <label>Amount (₹)</label>
-        <input name="amount" type="number" min="100" max="2000" step="1" required>
+        <input name="amount" type="number" min="10" max="2000" step="1" required>
         <label>UTR / Transaction ID</label>
-        <input name="utr" maxlength="100" placeholder="Enter payment UTR" required>
+        <input name="utr" maxlength="10" placeholder="Enter payment UTR" required>
         <button type="submit">Submit Payment</button>
       </form>
     </div>
