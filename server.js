@@ -18,6 +18,7 @@ app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use("/public", express.static("public"));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -599,19 +600,89 @@ app.get("/orders", requireLogin, async (req, res) => {
   }
 });
 
+// ADD FUNDS PAGE
 app.get("/add-funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
-      <p>Submit your payment amount and UTR. Admin approval is required.</p>
+      <h3>Scan QR & Pay</h3>
+
+      <p>Minimum Amount: ₹10</p>
+      <p>Maximum Amount: ₹2,000</p>
+
+      <div style="text-align:center;background:white;padding:15px;border-radius:10px;margin:15px 0">
+        <img
+          src="/public/payment-qr.png"
+          alt="Payment QR Code"
+          style="width:100%;max-width:280px;height:auto"
+        >
+      </div>
+
+      <p>Scan this QR using any UPI app.</p>
+
       <form method="POST">
         <label>Amount (₹)</label>
-        <input name="amount" type="number" min="100" max="2000" required>
+        <input
+          name="amount"
+          type="number"
+          min="10"
+          max="2000"
+          step="1"
+          required
+        >
+
         <label>UTR / Transaction ID</label>
-        <input name="utr" required maxlength="100">
-        <button>Submit Payment</button>
+        <input
+          name="utr"
+          maxlength="100"
+          placeholder="Enter payment UTR"
+          required
+        >
+
+        <button type="submit">Submit Payment</button>
       </form>
     </div>
   `, req.session.user));
+});
+
+
+// ADD FUNDS SUBMIT
+app.post("/add-funds", requireLogin, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    const utr = String(req.body.utr || "").trim();
+
+    if (
+      !Number.isInteger(amount) ||
+      amount < 10 ||
+      amount > 2000 ||
+      !utr
+    ) {
+      return res.status(400).send(
+        page("Payment Error",
+          "<div class='card'>Amount must be between ₹10 and ₹2,000 and UTR is required.</div>",
+          req.session.user
+        )
+      );
+    }
+
+    await db(`
+      INSERT INTO payments(user_id,amount,utr,status)
+      VALUES($1,$2,$3,'Pending')
+    `, [req.session.user.id, amount, utr]);
+
+    res.send(page("Payment Submitted", `
+      <div class="card">
+        <h3>Payment Request Submitted</h3>
+        <p>Amount: ₹${amount}</p>
+        <p>Your payment is waiting for Admin approval.</p>
+        <a class="btn" href="/dashboard">Go to Dashboard</a>
+      </div>
+    `, req.session.user));
+
+  } catch (error) {
+    console.error("Add Funds Error:", error);
+    res.status(500).send("Payment submission failed.");
+  }
 });
 
 app.post("/add-funds", requireLogin, async (req, res) => {
