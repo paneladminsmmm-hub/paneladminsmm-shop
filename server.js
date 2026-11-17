@@ -8,7 +8,6 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const {
-  providerServices,
   providerAddOrder,
   providerOrderStatus
 } = require("./src/provider");
@@ -31,7 +30,7 @@ const db = (sql, params = []) => pool.query(sql, params);
 
 app.use(session({
   name: "royalpanel.sid",
-  secret: process.env.SESSION_SECRET || "change-this-secret",
+  secret: process.env.SESSION_SECRET || "CHANGE_THIS_LONG_SECRET",
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -45,18 +44,15 @@ app.use(session({
 const authLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 30,
-  standardHeaders: "draft-8",
+  standardHeaders: true,
   legacyHeaders: false
 });
 
 function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[char]);
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    '"': "&quot;", "'": "&#39;"
+  })[c]);
 }
 
 function requireLogin(req, res, next) {
@@ -79,7 +75,7 @@ function page(title, content, user = null) {
       <a href="/orders">My Orders</a>
       <a href="/add-funds">Add Funds</a>
       <a href="/support">Support</a>
-      ${user.is_admin ? '<a href="/admin">Admin</a>' : ""}
+      ${user.is_admin ? '<a href="/admin">Admin Panel</a>' : ""}
       <a href="/logout">Logout</a>
     </nav>
   ` : `
@@ -106,8 +102,7 @@ button,.btn{display:inline-block;border:0;background:#e63946;color:white;padding
 table{width:100%;border-collapse:collapse;min-width:550px}
 th,td{padding:10px;border-bottom:1px solid #384154;text-align:left;font-size:13px}
 .tablewrap{overflow-x:auto}
-small,.muted{color:#aeb8c9}
-h3{margin-top:0}
+small{color:#aeb8c9}
 </style>
 </head>
 <body>
@@ -132,9 +127,16 @@ async function setupDatabase() {
 
   await db(`
     ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email TEXT,
+    ADD COLUMN IF NOT EXISTS password_hash TEXT,
     ADD COLUMN IF NOT EXISTS balance NUMERIC(12,2) DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS password_hash TEXT
+    ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE
+  `);
+
+  await db(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique
+    ON users (LOWER(email))
+    WHERE email IS NOT NULL
   `);
 
   await db(`
@@ -210,115 +212,160 @@ async function setupDatabase() {
     )
   `);
 
-  const adminUsername = process.env.ADMIN_USERNAME;
-  const adminPassword = process.env.ADMIN_PASSWORD;
+  // Configure admin through Render Environment Variables.
+  const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+  const adminUsername = String(process.env.ADMIN_USERNAME || "").trim();
+  const adminPassword = String(process.env.ADMIN_PASSWORD || "");
 
-  if (adminUsername && adminPassword) {
-    const found = await db(
-      "SELECT id FROM users WHERE username=$1",
-      [adminUsername]
+  if (adminEmail && adminUsername && adminPassword) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
+      throw new Error("ADMIN_EMAIL is invalid.");
+    }
+
+    const existing = await db(
+      "SELECT id FROM users WHERE LOWER(email)=LOWER($1) OR username=$2 LIMIT 1",
+      [adminEmail, adminUsername]
     );
 
-    if (found.rowCount === 0) {
-      const hash = await bcrypt.hash(adminPassword, 12);
-      await db(
-        "INSERT INTO users(username,password_hash,is_admin,balance) VALUES($1,$2,TRUE,0)",
-        [adminUsername, hash]
-      );
-      console.log("New admin account created.");
+    const hash = await bcrypt.hash(adminPassword, 12);
+
+    if (existing.rowCount) {
+      await db(`
+        UPDATE users
+        SET email=$1, username=$2, password_hash=$3, is_admin=TRUE
+        WHERE id=$4
+      `, [adminEmail, adminUsername, hash, existing.rows[0].id]);
+    } else {
+      await db(`
+        INSERT INTO users(email,username,password_hash,balance,is_admin)
+        VALUES($1,$2,$3,0,TRUE)
+      `, [adminEmail, adminUsername, hash]);
     }
+
+    console.log("Admin account configured.");
+  } else {
+    console.log("Admin setup skipped: set ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD.");
   }
 }
 
-app.get("/health", (req, res) => {
-  res.send("ROYAL PANEL OK");
-});
+app.get("/health", (req, res) => res.send("ROYAL PANEL OK"));
 
 app.get("/", (req, res) => {
   res.redirect(req.session.user ? "/dashboard" : "/login");
 });
 
+// REGISTER: EMAIL + USERNAME + PASSWORD
 app.get("/register", (req, res) => {
-  res.send(page("Register", `
+  res.send(page("Create Account", `
     <div class="card">
       <form method="POST">
+        <label>Gmail / Email Address</label>
+        <input type="email" name="email" placeholder="Enter your Gmail" required>
         <label>Username</label>
-        <input name="username" required minlength="3">
+        <input name="username" placeholder="Choose username" required minlength="3" maxlength="30">
         <label>Password</label>
-        <input name="password" type="password" required minlength="6">
-        <button>Create Account</button>
+        <input type="password" name="password" placeholder="Create password" required minlength="6">
+        <button type="submit">Register</button>
       </form>
-      <a href="/login">Already have an account? Login</a>
+      <p>Already have an account? <a href="/login">Login</a></p>
     </div>
   `));
 });
 
 app.post("/register", authLimit, async (req, res) => {
   try {
+    const email = String(req.body.email || "").trim().toLowerCase();
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "");
 
-    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username) || password.length < 6) {
-      return res.send(page("Register", "<p>Invalid username or password. Use 3-30 letters/numbers and a password of at least 6 characters.</p>"));
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).send(page("Register", "<div class='card'>Enter a valid email address. <a href='/register'>Try again</a></div>"));
+    }
+
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      return res.status(400).send(page("Register", "<div class='card'>Username must be 3-30 letters, numbers or underscores. <a href='/register'>Try again</a></div>"));
+    }
+
+    if (password.length < 6) {
+      return res.status(400).send(page("Register", "<div class='card'>Password must be at least 6 characters. <a href='/register'>Try again</a></div>"));
+    }
+
+    const exists = await db(
+      "SELECT id FROM users WHERE LOWER(email)=LOWER($1) OR username=$2",
+      [email, username]
+    );
+
+    if (exists.rowCount) {
+      return res.status(409).send(page("Register", "<div class='card'>Email or username already exists. <a href='/register'>Try again</a></div>"));
     }
 
     const hash = await bcrypt.hash(password, 12);
-    await db(
-      "INSERT INTO users(username,password_hash,balance,is_admin) VALUES($1,$2,0,FALSE)",
-      [username, hash]
-    );
+
+    await db(`
+      INSERT INTO users(email,username,password_hash,balance,is_admin)
+      VALUES($1,$2,$3,0,FALSE)
+    `, [email, username, hash]);
 
     res.redirect("/login");
   } catch (error) {
-    res.status(400).send(page("Register", "<p>Account could not be created. Username may already exist.</p>"));
+    console.error("Register error:", error);
+    res.status(500).send(page("Register Error", "<div class='card'>Registration failed. Please try again.</div>"));
   }
 });
 
+// LOGIN: EMAIL + PASSWORD
 app.get("/login", (req, res) => {
   res.send(page("Login", `
     <div class="card">
       <form method="POST">
-        <label>Username</label>
-        <input name="username" required>
+        <label>Gmail / Email Address</label>
+        <input type="email" name="email" placeholder="Enter your Gmail" required>
         <label>Password</label>
-        <input name="password" type="password" required>
-        <button>Login</button>
+        <input type="password" name="password" placeholder="Enter password" required>
+        <button type="submit">Login</button>
       </form>
-      <a href="/register">Create new account</a>
+      <p>New user? <a href="/register">Create Account</a></p>
+      <p>Admin also logs in here using Admin Gmail and password.</p>
     </div>
   `));
 });
 
 app.post("/login", authLimit, async (req, res) => {
   try {
-    const username = String(req.body.username || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+
     const result = await db(
-      "SELECT * FROM users WHERE username=$1",
-      [username]
+      "SELECT * FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1",
+      [email]
     );
 
     if (!result.rowCount) {
-      return res.status(401).send(page("Login", "<p>Wrong username or password.</p>"));
+      return res.status(401).send(page("Login Failed", "<div class='card'>Email or password is incorrect. <a href='/login'>Try again</a></div>"));
     }
 
     const user = result.rows[0];
     const valid = user.password_hash &&
-      await bcrypt.compare(String(req.body.password || ""), user.password_hash);
+      await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
-      return res.status(401).send(page("Login", "<p>Wrong username or password.</p>"));
+      return res.status(401).send(page("Login Failed", "<div class='card'>Email or password is incorrect. <a href='/login'>Try again</a></div>"));
     }
 
     req.session.regenerate(error => {
       if (error) return res.status(500).send("Session error");
+
       req.session.user = {
         id: user.id,
         username: user.username,
+        email: user.email,
         is_admin: user.is_admin
       };
-      res.redirect("/dashboard");
+
+      res.redirect(user.is_admin ? "/admin" : "/dashboard");
     });
   } catch (error) {
+    console.error("Login error:", error);
     res.status(500).send("Login error");
   }
 });
@@ -334,18 +381,12 @@ app.get("/dashboard", requireLogin, async (req, res) => {
       [req.session.user.id]
     );
 
-    const balance = result.rows[0]?.balance || 0;
-
     res.send(page("Dashboard", `
       <div class="card">
         <h3>Welcome, ${esc(req.session.user.username)}</h3>
-        <h2>Wallet Balance: ₹${Number(balance).toFixed(2)}</h2>
+        <p>${esc(req.session.user.email)}</p>
+        <h2>Wallet Balance: ₹${Number(result.rows[0]?.balance || 0).toFixed(2)}</h2>
         <a class="btn" href="/new-order">Place New Order</a>
-      </div>
-      <div class="card">
-        <a href="/services">View Services</a> |
-        <a href="/orders">My Orders</a> |
-        <a href="/add-funds">Add Funds</a>
       </div>
     `, req.session.user));
   } catch (error) {
@@ -356,14 +397,12 @@ app.get("/dashboard", requireLogin, async (req, res) => {
 app.get("/services", requireLogin, async (req, res) => {
   try {
     const result = await db(`
-      SELECT category, COUNT(*) AS total
-      FROM services
-      WHERE active=TRUE
-      GROUP BY category
-      ORDER BY category
+      SELECT category,COUNT(*) AS total
+      FROM services WHERE active=TRUE
+      GROUP BY category ORDER BY category
     `);
 
-    const cards = result.rows.map(row => `
+    const html = result.rows.map(row => `
       <div class="card">
         <h3>${esc(row.category)}</h3>
         <p>${esc(row.total)} services</p>
@@ -371,7 +410,7 @@ app.get("/services", requireLogin, async (req, res) => {
       </div>
     `).join("");
 
-    res.send(page("Services", cards || "<p>No services available.</p>", req.session.user));
+    res.send(page("Services", html || "<p>No services available.</p>", req.session.user));
   } catch (error) {
     res.status(500).send("Services error");
   }
@@ -381,28 +420,20 @@ app.get("/new-order", requireLogin, async (req, res) => {
   try {
     const search = String(req.query.search || "").trim().slice(0, 100);
 
-    let result;
-    if (search) {
-      result = await db(`
-        SELECT * FROM services
-        WHERE active=TRUE
-        AND (
-          name ILIKE $1 OR
-          category ILIKE $1 OR
-          COALESCE(description,'') ILIKE $1 OR
-          COALESCE(provider_id,'') ILIKE $1
-        )
-        ORDER BY category,name
-        LIMIT 500
-      `, [`%${search}%`]);
-    } else {
-      result = await db(`
-        SELECT * FROM services
-        WHERE active=TRUE
-        ORDER BY category,name
-        LIMIT 500
-      `);
-    }
+    const result = search
+      ? await db(`
+          SELECT * FROM services
+          WHERE active=TRUE AND (
+            name ILIKE $1 OR category ILIKE $1 OR
+            COALESCE(description,'') ILIKE $1 OR
+            COALESCE(provider_id,'') ILIKE $1
+          )
+          ORDER BY category,name LIMIT 500
+        `, [`%${search}%`])
+      : await db(`
+          SELECT * FROM services
+          WHERE active=TRUE ORDER BY category,name LIMIT 500
+        `);
 
     const groups = {};
     for (const service of result.rows) {
@@ -423,31 +454,31 @@ app.get("/new-order", requireLogin, async (req, res) => {
 
     res.send(page("New Order", `
       <div class="card">
-        <form method="GET" action="/new-order">
+        <form method="GET">
           <label>Search Services</label>
           <input name="search" value="${esc(search)}" placeholder="Search Instagram, Facebook, YouTube...">
           <button>Search</button>
         </form>
       </div>
       <div class="card">
-        <form method="POST" action="/new-order">
+        <form method="POST">
           <label>Select Service</label>
           <select name="service_id" required>
             <option value="">Choose a service</option>
             ${options}
           </select>
           <label>Post / Profile Link</label>
-          <input name="link" type="url" required placeholder="https://">
+          <input name="link" type="url" placeholder="https://" required>
           <label>Quantity</label>
           <input name="quantity" type="number" min="1" required>
           <button>Place Order</button>
         </form>
       </div>
-      ${result.rows.length === 0 ? "<p>No matching services found.</p>" : ""}
+      ${result.rows.length ? "" : "<p>No services found.</p>"}
     `, req.session.user));
   } catch (error) {
     console.error(error);
-    res.status(500).send("New order page error");
+    res.status(500).send("New Order page error");
   }
 });
 
@@ -459,9 +490,10 @@ app.post("/new-order", requireLogin, async (req, res) => {
     const quantity = Number(req.body.quantity);
     const link = String(req.body.link || "").trim();
 
-    if (!Number.isInteger(serviceId) || !Number.isInteger(quantity) ||
-        quantity < 1 || !/^https?:\/\//i.test(link)) {
-      return res.status(400).send(page("Order Error", "<p>Invalid order details.</p>", req.session.user));
+    if (!Number.isInteger(serviceId) ||
+        !Number.isInteger(quantity) || quantity < 1 ||
+        !/^https?:\/\//i.test(link)) {
+      throw new Error("Invalid order details.");
     }
 
     await client.query("BEGIN");
@@ -488,13 +520,13 @@ app.post("/new-order", requireLogin, async (req, res) => {
     }
 
     if (!service.provider_id) {
-      throw new Error("This service has no Provider ID. Ask admin to update it.");
+      throw new Error("Provider ID missing for this service.");
     }
 
     const charge = Number(service.rate) * quantity / 1000;
 
     if (Number(user.balance) < charge) {
-      throw new Error("Insufficient wallet balance. Please add funds.");
+      throw new Error("Insufficient wallet balance. Add funds first.");
     }
 
     const providerResult = await providerAddOrder(
@@ -509,7 +541,7 @@ app.post("/new-order", requireLogin, async (req, res) => {
       providerResult?.data?.order;
 
     if (!providerOrderId) {
-      throw new Error("Provider did not return an order ID. Contact admin before retrying.");
+      throw new Error("Provider did not return an order ID.");
     }
 
     await client.query(
@@ -521,25 +553,16 @@ app.post("/new-order", requireLogin, async (req, res) => {
       INSERT INTO orders
       (user_id,service_id,provider_order_id,link,quantity,charge,status)
       VALUES($1,$2,$3,$4,$5,$6,'Processing')
-    `, [
-      user.id,
-      service.id,
-      String(providerOrderId),
-      link,
-      quantity,
-      charge
-    ]);
+    `, [user.id, service.id, String(providerOrderId), link, quantity, charge]);
 
     await client.query("COMMIT");
     res.redirect("/orders");
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Order error:", error);
-    res.status(400).send(page(
-      "Order Error",
-      `<div class="card"><p>${esc(error.message)}</p><a href="/new-order">Go Back</a></div>`,
-      req.session.user
-    ));
+    res.status(400).send(page("Order Error", `
+      <div class="card">${esc(error.message)}<p><a href="/new-order">Go Back</a></p></div>
+    `, req.session.user));
   } finally {
     client.release();
   }
@@ -549,17 +572,13 @@ app.get("/orders", requireLogin, async (req, res) => {
   try {
     const result = await db(`
       SELECT o.*,s.name AS service_name
-      FROM orders o
-      LEFT JOIN services s ON s.id=o.service_id
-      WHERE o.user_id=$1
-      ORDER BY o.id DESC
-      LIMIT 200
+      FROM orders o LEFT JOIN services s ON s.id=o.service_id
+      WHERE o.user_id=$1 ORDER BY o.id DESC LIMIT 200
     `, [req.session.user.id]);
 
     const rows = result.rows.map(o => `
       <tr>
-        <td>${o.id}</td>
-        <td>${esc(o.service_name || "Service")}</td>
+        <td>${o.id}</td><td>${esc(o.service_name || "Service")}</td>
         <td>${esc(o.quantity)}</td>
         <td>₹${Number(o.charge || 0).toFixed(2)}</td>
         <td>${esc(o.status)}</td>
@@ -576,7 +595,6 @@ app.get("/orders", requireLogin, async (req, res) => {
       </div>
     `, req.session.user));
   } catch (error) {
-    console.error(error);
     res.status(500).send("Orders error");
   }
 });
@@ -584,10 +602,10 @@ app.get("/orders", requireLogin, async (req, res) => {
 app.get("/add-funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
-      <p>Submit your payment amount and UTR number. Admin approval is required.</p>
+      <p>Submit your payment amount and UTR. Admin approval is required.</p>
       <form method="POST">
         <label>Amount (₹)</label>
-        <input name="amount" type="number" min="100" max="2000" step="1" required>
+        <input name="amount" type="number" min="100" max="2000" required>
         <label>UTR / Transaction ID</label>
         <input name="utr" required maxlength="100">
         <button>Submit Payment</button>
@@ -602,7 +620,7 @@ app.post("/add-funds", requireLogin, async (req, res) => {
     const utr = String(req.body.utr || "").trim();
 
     if (!Number.isFinite(amount) || amount < 100 || amount > 2000 || !utr) {
-      return res.status(400).send("Enter a valid amount and UTR.");
+      return res.status(400).send("Invalid amount or UTR.");
     }
 
     await db(`
@@ -610,9 +628,9 @@ app.post("/add-funds", requireLogin, async (req, res) => {
       VALUES($1,$2,$3,'Pending')
     `, [req.session.user.id, amount, utr]);
 
-    res.send(page("Payment Submitted", "<div class='card'>Payment request submitted. Wait for admin approval.</div>", req.session.user));
+    res.send(page("Payment Submitted", "<div class='card'>Payment submitted. Wait for admin approval.</div>", req.session.user));
   } catch (error) {
-    res.status(500).send("Payment submission error");
+    res.status(500).send("Payment error");
   }
 });
 
@@ -675,17 +693,11 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
 
     const rows = result.rows.map(s => `
       <tr>
-        <td>${s.id}</td>
-        <td>${esc(s.name)}</td>
-        <td>${esc(s.category)}</td>
-        <td>${esc(s.provider_id || "-")}</td>
+        <td>${s.id}</td><td>${esc(s.name)}</td>
+        <td>${esc(s.category)}</td><td>${esc(s.provider_id || "-")}</td>
         <td>₹${Number(s.rate).toFixed(2)}</td>
         <td>${s.active ? "Active" : "Off"}</td>
-        <td>
-          <form method="POST" action="/admin/services/${s.id}/toggle">
-            <button>${s.active ? "Disable" : "Enable"}</button>
-          </form>
-        </td>
+        <td><form method="POST" action="/admin/services/${s.id}/toggle"><button>${s.active ? "Disable" : "Enable"}</button></form></td>
       </tr>
     `).join("");
 
@@ -703,21 +715,18 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           </select>
           <label>Provider Service ID</label><input name="provider_id" required>
           <label>Rate per 1000 (₹)</label><input name="rate" type="number" step="0.0001" required>
-          <label>Minimum Quantity</label><input name="min" type="number" value="100" required>
-          <label>Maximum Quantity</label><input name="max" type="number" value="100000" required>
+          <label>Minimum</label><input name="min" type="number" value="100" required>
+          <label>Maximum</label><input name="max" type="number" value="100000" required>
           <label>Description</label><textarea name="description"></textarea>
           <button>Add Service</button>
         </form>
       </div>
       <div class="card tablewrap">
-        <table>
-          <tr><th>ID</th><th>Name</th><th>Category</th><th>Provider ID</th><th>Rate/1K</th><th>Status</th><th>Action</th></tr>
-          ${rows}
-        </table>
+        <table><tr><th>ID</th><th>Name</th><th>Category</th><th>Provider ID</th><th>Rate</th><th>Status</th><th>Action</th></tr>${rows}</table>
       </div>
     `, req.session.user));
   } catch (error) {
-    res.status(500).send("Service admin error");
+    res.status(500).send("Services admin error");
   }
 });
 
@@ -744,16 +753,13 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
 
     res.redirect("/admin/services");
   } catch (error) {
-    console.error(error);
     res.status(500).send("Could not add service.");
   }
 });
 
 app.post("/admin/services/:id/toggle", requireAdmin, async (req, res) => {
   try {
-    await db(`
-      UPDATE services SET active=NOT active WHERE id=$1
-    `, [Number(req.params.id)]);
+    await db("UPDATE services SET active=NOT active WHERE id=$1", [Number(req.params.id)]);
     res.redirect("/admin/services");
   } catch (error) {
     res.status(500).send("Update error");
@@ -764,8 +770,7 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
   try {
     const result = await db(`
       SELECT p.*,u.username
-      FROM payments p
-      LEFT JOIN users u ON u.id=p.user_id
+      FROM payments p LEFT JOIN users u ON u.id=p.user_id
       ORDER BY p.id DESC LIMIT 200
     `);
 
@@ -774,20 +779,13 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
         <td>${p.id}</td><td>${esc(p.username)}</td>
         <td>₹${Number(p.amount).toFixed(2)}</td>
         <td>${esc(p.utr)}</td><td>${esc(p.status)}</td>
-        <td>
-          ${p.status === "Pending" ? `
-            <form method="POST" action="/admin/payments/${p.id}/approve">
-              <button>Approve</button>
-            </form>
-          ` : "-"}
-        </td>
+        <td>${p.status === "Pending" ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>` : "-"}</td>
       </tr>
     `).join("");
 
     res.send(page("Payments", `
       <div class="card tablewrap">
-        <table><tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
-        ${rows}</table>
+        <table><tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>${rows}</table>
       </div>
     `, req.session.user));
   } catch (error) {
@@ -846,8 +844,7 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
       <tr>
         <td>${o.id}</td><td>${esc(o.username)}</td>
         <td>${esc(o.service_name || "Service")}</td>
-        <td>${esc(o.quantity)}</td>
-        <td>${esc(o.status)}</td>
+        <td>${esc(o.quantity)}</td><td>${esc(o.status)}</td>
         <td>${esc(o.provider_order_id || "-")}</td>
         <td>
           <form method="POST" action="/admin/orders/${o.id}/status">
@@ -864,10 +861,7 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
 
     res.send(page("All Orders", `
       <div class="card tablewrap">
-        <table>
-          <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider ID</th><th>Update</th></tr>
-          ${rows}
-        </table>
+        <table><tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider ID</th><th>Update</th></tr>${rows}</table>
       </div>
     `, req.session.user));
   } catch (error) {
@@ -877,18 +871,14 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
 
 app.post("/admin/orders/:id/status", requireAdmin, async (req, res) => {
   try {
-    const allowed = [
-      "Pending","Processing","In progress",
-      "Completed","Partial","Canceled","Failed"
-    ];
-
+    const allowed = ["Pending","Processing","In progress","Completed","Partial","Canceled","Failed"];
     const status = String(req.body.status || "");
+
     if (!allowed.includes(status)) return res.status(400).send("Invalid status");
 
-    await db(
-      "UPDATE orders SET status=$1 WHERE id=$2",
-      [status, Number(req.params.id)]
-    );
+    await db("UPDATE orders SET status=$1 WHERE id=$2", [
+      status, Number(req.params.id)
+    ]);
 
     res.redirect("/admin/orders");
   } catch (error) {
@@ -896,24 +886,19 @@ app.post("/admin/orders/:id/status", requireAdmin, async (req, res) => {
   }
 });
 
-// Best-effort provider status refresh for recent active orders.
 async function syncProviderStatuses() {
   try {
     const result = await db(`
-      SELECT id,provider_order_id
-      FROM orders
+      SELECT id,provider_order_id FROM orders
       WHERE provider_order_id IS NOT NULL
       AND status NOT IN ('Completed','Canceled','Failed')
-      ORDER BY id DESC
-      LIMIT 30
+      ORDER BY id DESC LIMIT 30
     `);
 
     for (const order of result.rows) {
       try {
         const data = await providerOrderStatus(order.provider_order_id);
-        const raw = String(
-          data?.status ?? data?.data?.status ?? ""
-        ).trim().toLowerCase();
+        const raw = String(data?.status ?? data?.data?.status ?? "").trim().toLowerCase();
 
         const mapping = {
           pending: "Pending",
@@ -926,15 +911,11 @@ async function syncProviderStatuses() {
           failed: "Failed"
         };
 
-        const status = mapping[raw];
-        if (status) {
-          await db(
-            "UPDATE orders SET status=$1 WHERE id=$2",
-            [status, order.id]
-          );
+        if (mapping[raw]) {
+          await db("UPDATE orders SET status=$1 WHERE id=$2", [mapping[raw], order.id]);
         }
       } catch (error) {
-        console.error("Provider status check failed:", order.id, error.message);
+        console.error("Provider status error:", error.message);
       }
     }
   } catch (error) {
@@ -942,23 +923,28 @@ async function syncProviderStatuses() {
   }
 }
 
-const server = app.listen(process.env.PORT || 3000, async () => {
+async function start() {
   try {
     await setupDatabase();
-    console.log("ROYAL PANEL started.");
+
+    const server = app.listen(process.env.PORT || 3000, () => {
+      console.log("ROYAL PANEL running.");
+    });
+
+    const timer = setInterval(syncProviderStatuses, 60000);
+    timer.unref();
+
+    process.on("SIGTERM", async () => {
+      clearInterval(timer);
+      server.close(async () => {
+        await pool.end();
+        process.exit(0);
+      });
+    });
   } catch (error) {
-    console.error("Database setup failed:", error);
-    server.close();
+    console.error("SERVER START FAILED:", error);
+    process.exit(1);
   }
-});
+}
 
-const statusTimer = setInterval(syncProviderStatuses, 60000);
-statusTimer.unref();
-
-process.on("SIGTERM", async () => {
-  clearInterval(statusTimer);
-  server.close(async () => {
-    await pool.end();
-    process.exit(0);
-  });
-});
+start();
