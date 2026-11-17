@@ -475,11 +475,18 @@ app.get("/new-order", requireLogin, async (req, res) => {
           <label>Post / Profile Link</label>
           <input name="link" type="url"
             placeholder="https://" required>
-
-          <label>Quantity</label>
-          <input name="quantity" id="quantityInput"
-  type="number" min="100" max="1000000" step="1"
-  placeholder="Minimum 100 - Maximum 1000000" required>
+<label>Quantity</label>
+<input
+  name="quantity"
+  id="quantityInput"
+  type="number"
+  min="100"
+  max="1000000"
+  step="1"
+  placeholder="Minimum 100 - Maximum 1000000"
+  required
+>
+          
         
          <div style="
             background:#f3f4f6;
