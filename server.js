@@ -244,7 +244,6 @@ async function setupDatabase() {
     )
   `);
 
-  // ADMIN SETUP: Render Environment Variables
   const adminEmail = String(process.env.ADMIN_EMAIL || "")
     .trim().toLowerCase();
 
@@ -286,9 +285,7 @@ async function setupDatabase() {
 
     console.log("Admin account configured.");
   } else {
-    console.log(
-      "Admin setup skipped: set ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD."
-    );
+    console.log("Admin setup skipped: set ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD.");
   }
 }
 
@@ -307,24 +304,14 @@ app.get("/register", (req, res) => {
     <div class="card">
       <form method="POST">
         <label>Gmail / Email Address</label>
-        <input type="email" name="email"
-          placeholder="Enter your Gmail" required>
-
+        <input type="email" name="email" placeholder="Enter your Gmail" required>
         <label>Username</label>
-        <input name="username"
-          placeholder="Choose username"
-          required minlength="3" maxlength="30">
-
+        <input name="username" placeholder="Choose username" required minlength="3" maxlength="30">
         <label>Password</label>
-        <input type="password" name="password"
-          placeholder="Create password"
-          required minlength="6">
-
+        <input type="password" name="password" placeholder="Create password" required minlength="6">
         <button type="submit">Register</button>
       </form>
-      <p>Already have an account?
-        <a href="/login">Login</a>
-      </p>
+      <p>Already have an account? <a href="/login">Login</a></p>
     </div>
   `));
 });
@@ -332,31 +319,20 @@ app.get("/register", (req, res) => {
 // REGISTER SUBMIT
 app.post("/register", authLimit, async (req, res) => {
   try {
-    const email = String(req.body.email || "")
-      .trim().toLowerCase();
-
+    const email = String(req.body.email || "").trim().toLowerCase();
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "");
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).send(page(
-        "Register",
-        "<div class='card'>Enter a valid email address. <a href='/register'>Try again</a></div>"
-      ));
+      return res.status(400).send("Enter a valid email address.");
     }
 
     if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-      return res.status(400).send(page(
-        "Register",
-        "<div class='card'>Username must be 3-30 letters, numbers or underscores. <a href='/register'>Try again</a></div>"
-      ));
+      return res.status(400).send("Username must be 3-30 letters, numbers or underscores.");
     }
 
     if (password.length < 6) {
-      return res.status(400).send(page(
-        "Register",
-        "<div class='card'>Password must be at least 6 characters. <a href='/register'>Try again</a></div>"
-      ));
+      return res.status(400).send("Password must be at least 6 characters.");
     }
 
     const exists = await db(
@@ -366,10 +342,7 @@ app.post("/register", authLimit, async (req, res) => {
     );
 
     if (exists.rowCount) {
-      return res.status(409).send(page(
-        "Register",
-        "<div class='card'>Email or username already exists. <a href='/register'>Try again</a></div>"
-      ));
+      return res.status(409).send("Email or username already exists.");
     }
 
     const hash = await bcrypt.hash(password, 12);
@@ -383,10 +356,7 @@ app.post("/register", authLimit, async (req, res) => {
     res.redirect("/login");
   } catch (error) {
     console.error("Register error:", error);
-    res.status(500).send(page(
-      "Register Error",
-      "<div class='card'>Registration failed. Please try again.</div>"
-    ));
+    res.status(500).send("Registration failed.");
   }
 });
 
@@ -396,16 +366,11 @@ app.get("/login", (req, res) => {
     <div class="card">
       <form method="POST">
         <label>Gmail / Email Address</label>
-        <input type="email" name="email"
-          placeholder="Enter your Gmail" required>
-
+        <input type="email" name="email" placeholder="Enter your Gmail" required>
         <label>Password</label>
-        <input type="password" name="password"
-          placeholder="Enter password" required>
-
+        <input type="password" name="password" placeholder="Enter password" required>
         <button type="submit">Login</button>
       </form>
-
       <p>New user? <a href="/register">Create Account</a></p>
       <p>Admin also logs in here using Admin Gmail and password.</p>
     </div>
@@ -415,9 +380,7 @@ app.get("/login", (req, res) => {
 // LOGIN SUBMIT
 app.post("/login", authLimit, async (req, res) => {
   try {
-    const email = String(req.body.email || "")
-      .trim().toLowerCase();
-
+    const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
 
     const result = await db(
@@ -426,22 +389,15 @@ app.post("/login", authLimit, async (req, res) => {
     );
 
     if (!result.rowCount) {
-      return res.status(401).send(page(
-        "Login Failed",
-        "<div class='card'>Email or password is incorrect. <a href='/login'>Try again</a></div>"
-      ));
+      return res.status(401).send("Email or password is incorrect.");
     }
 
     const user = result.rows[0];
-
     const valid = user.password_hash &&
       await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
-      return res.status(401).send(page(
-        "Login Failed",
-        "<div class='card'>Email or password is incorrect. <a href='/login'>Try again</a></div>"
-      ));
+      return res.status(401).send("Email or password is incorrect.");
     }
 
     req.session.regenerate(error => {
@@ -479,9 +435,7 @@ app.get("/dashboard", requireLogin, async (req, res) => {
       <div class="card">
         <h3>Welcome, ${esc(req.session.user.username)}</h3>
         <p>${esc(req.session.user.email)}</p>
-        <h2>Wallet Balance: ₹${Number(
-          result.rows[0]?.balance || 0
-        ).toFixed(2)}</h2>
+        <h2>Wallet Balance: ₹${Number(result.rows[0]?.balance || 0).toFixed(2)}</h2>
         <a class="btn" href="/new-order">Place New Order</a>
       </div>
     `, req.session.user));
@@ -506,18 +460,13 @@ app.get("/services", requireLogin, async (req, res) => {
       <div class="card">
         <h3>${esc(row.category)}</h3>
         <p>${esc(row.total)} services</p>
-        <a class="btn"
-          href="/new-order?search=${encodeURIComponent(row.category)}">
+        <a class="btn" href="/new-order?search=${encodeURIComponent(row.category)}">
           View Services
         </a>
       </div>
     `).join("");
 
-    res.send(page(
-      "Services",
-      html || "<p>No services available.</p>",
-      req.session.user
-    ));
+    res.send(page("Services", html || "<p>No services available.</p>", req.session.user));
   } catch (error) {
     console.error("Services error:", error);
     res.status(500).send("Services error");
@@ -527,63 +476,50 @@ app.get("/services", requireLogin, async (req, res) => {
 // NEW ORDER PAGE
 app.get("/new-order", requireLogin, async (req, res) => {
   try {
-    const search = String(req.query.search || "")
-      .trim().slice(0, 100);
+    const search = String(req.query.search || "").trim().slice(0, 100);
 
     const result = search
       ? await db(`
           SELECT * FROM services
           WHERE active=TRUE AND (
-            name ILIKE $1 OR
-            category ILIKE $1 OR
+            name ILIKE $1 OR category ILIKE $1 OR
             COALESCE(description,'') ILIKE $1 OR
             COALESCE(provider_id,'') ILIKE $1
           )
-          ORDER BY category,name
-          LIMIT 500
+          ORDER BY category,name LIMIT 500
         `, [`%${search}%`])
       : await db(`
           SELECT * FROM services
           WHERE active=TRUE
-          ORDER BY category,name
-          LIMIT 500
+          ORDER BY category,name LIMIT 500
         `);
 
     const groups = {};
 
     for (const service of result.rows) {
       const category = service.category || "Other";
-
       if (!groups[category]) groups[category] = [];
       groups[category].push(service);
     }
 
-    const options = Object.entries(groups).map(
-      ([category, services]) => `
-        <optgroup label="${esc(category)}">
-          ${services.map(s => `
-            <option
-              value="${s.id}"
-              data-rate="${Number(s.rate)}"
-              data-min="${Math.max(100, Number(s.min) || 100)}"
-              data-max="${Math.min(10000000, Number(s.max) || 10000000)}"
-            >
-              ${esc(s.name)} | ₹${Number(s.rate).toFixed(2)}/1K
-            </option>
-          `).join("")}
-        </optgroup>
-      `
-    ).join("");
+    const options = Object.entries(groups).map(([category, services]) => `
+      <optgroup label="${esc(category)}">
+        ${services.map(s => `
+          <option value="${s.id}"
+            data-rate="${Number(s.rate)}"
+            data-min="${Math.max(100, Number(s.min) || 100)}"
+            data-max="${Math.min(10000000, Number(s.max) || 10000000)}">
+            ${esc(s.name)} | ₹${Number(s.rate).toFixed(2)}/1K
+          </option>
+        `).join("")}
+      </optgroup>
+    `).join("");
 
     res.send(page("New Order", `
       <div class="card">
         <form method="GET">
           <label>Search Services</label>
-          <input
-            name="search"
-            value="${esc(search)}"
-            placeholder="Search Instagram, Facebook, YouTube..."
-          >
+          <input name="search" value="${esc(search)}" placeholder="Search Instagram, Facebook, YouTube...">
           <button type="submit">Search</button>
         </form>
       </div>
@@ -597,40 +533,17 @@ app.get("/new-order", requireLogin, async (req, res) => {
           </select>
 
           <label>Post / Profile Link</label>
-          <input
-            name="link"
-            type="url"
-            placeholder="https://"
-            required
-          >
+          <input name="link" type="url" placeholder="https://" required>
 
           <label>Quantity</label>
-          <input
-            name="quantity"
-            id="quantityInput"
-            type="number"
-            min="100"
-            max="10000000"
-            step="1"
-            placeholder="Minimum 100 - Maximum 10000000"
-            required
-          >
+          <input name="quantity" id="quantityInput" type="number"
+            min="100" max="10000000" step="1"
+            placeholder="Minimum 100 - Maximum 10000000" required>
 
-          <div style="
-            background:#f3f4f6;
-            color:#111;
-            padding:15px;
-            border-radius:10px;
-            margin:15px 0;
-          ">
+          <div style="background:#f3f4f6;color:#111;padding:15px;border-radius:10px;margin:15px 0">
             <div style="font-size:14px">Total Price</div>
-            <div id="totalPrice"
-              style="font-size:26px;font-weight:bold;margin-top:5px">
-              ₹0.00
-            </div>
-            <small id="priceDetails">
-              Select service and quantity
-            </small>
+            <div id="totalPrice" style="font-size:26px;font-weight:bold;margin-top:5px">₹0.00</div>
+            <small id="priceDetails">Select service and quantity</small>
           </div>
 
           <button type="submit">Place Order</button>
@@ -641,48 +554,30 @@ app.get("/new-order", requireLogin, async (req, res) => {
 
       <script>
         (function () {
-          const serviceSelect =
-            document.getElementById("serviceSelect");
-
-          const quantityInput =
-            document.getElementById("quantityInput");
-
-          const totalPrice =
-            document.getElementById("totalPrice");
-
-          const priceDetails =
-            document.getElementById("priceDetails");
+          const serviceSelect = document.getElementById("serviceSelect");
+          const quantityInput = document.getElementById("quantityInput");
+          const totalPrice = document.getElementById("totalPrice");
+          const priceDetails = document.getElementById("priceDetails");
 
           function updatePrice() {
-            const option =
-              serviceSelect.options[serviceSelect.selectedIndex];
-
+            const option = serviceSelect.options[serviceSelect.selectedIndex];
             const rate = Number(option.dataset.rate);
             const quantity = Number(quantityInput.value);
-
             const min = Number(option.dataset.min || 100);
             const max = Number(option.dataset.max || 10000000);
 
             quantityInput.min = min;
             quantityInput.max = max;
 
-            if (
-              !option.value ||
-              !Number.isFinite(rate) ||
-              !Number.isInteger(quantity) ||
-              quantity < min ||
-              quantity > max
-            ) {
+            if (!option.value || !Number.isFinite(rate) ||
+                !Number.isInteger(quantity) || quantity < min || quantity > max) {
               totalPrice.textContent = "₹0.00";
-              priceDetails.textContent =
-                "Quantity must be between " + min + " and " + max;
+              priceDetails.textContent = "Quantity must be between " + min + " and " + max;
               return;
             }
 
             const total = (rate * quantity) / 1000;
-
             totalPrice.textContent = "₹" + total.toFixed(2);
-
             priceDetails.textContent =
               quantity.toLocaleString("en-IN") +
               " × ₹" + rate.toFixed(2) + " per 1,000";
@@ -709,11 +604,9 @@ app.post("/new-order", requireLogin, async (req, res) => {
     const quantity = Number(req.body.quantity);
     const link = String(req.body.link || "").trim();
 
-    if (
-      !Number.isInteger(serviceId) ||
-      !Number.isInteger(quantity) ||
-      !/^https?:\/\//i.test(link)
-    ) {
+    if (!Number.isInteger(serviceId) ||
+        !Number.isInteger(quantity) ||
+        !/^https?:\/\//i.test(link)) {
       throw new Error("Invalid order details.");
     }
 
@@ -738,15 +631,10 @@ app.post("/new-order", requireLogin, async (req, res) => {
     const service = serviceResult.rows[0];
 
     const minimum = Math.max(100, Number(service.min) || 100);
-    const maximum = Math.min(
-      10000000,
-      Number(service.max) || 10000000
-    );
+    const maximum = Math.min(10000000, Number(service.max) || 10000000);
 
     if (quantity < minimum || quantity > maximum) {
-      throw new Error(
-        `Quantity must be between ${minimum} and ${maximum}.`
-      );
+      throw new Error(`Quantity must be between ${minimum} and ${maximum}.`);
     }
 
     if (!service.provider_id) {
@@ -788,12 +676,8 @@ app.post("/new-order", requireLogin, async (req, res) => {
       (user_id,service_id,provider_order_id,link,quantity,charge,status)
       VALUES($1,$2,$3,$4,$5,$6,'Processing')
     `, [
-      user.id,
-      service.id,
-      String(providerOrderId),
-      link,
-      quantity,
-      charge
+      user.id, service.id, String(providerOrderId),
+      link, quantity, charge
     ]);
 
     await client.query("COMMIT");
@@ -801,18 +685,13 @@ app.post("/new-order", requireLogin, async (req, res) => {
 
     res.redirect("/orders");
   } catch (error) {
-    if (transactionStarted) {
-      await client.query("ROLLBACK");
-    }
+    if (transactionStarted) await client.query("ROLLBACK");
 
     console.error("Order error:", error);
 
     res.status(400).send(page(
       "Order Error",
-      `<div class="card">
-        ${esc(error.message)}
-        <p><a href="/new-order">Go Back</a></p>
-      </div>`,
+      `<div class="card">${esc(error.message)}<p><a href="/new-order">Go Back</a></p></div>`,
       req.session.user
     ));
   } finally {
@@ -828,8 +707,7 @@ app.get("/orders", requireLogin, async (req, res) => {
       FROM orders o
       LEFT JOIN services s ON s.id=o.service_id
       WHERE o.user_id=$1
-      ORDER BY o.id DESC
-      LIMIT 200
+      ORDER BY o.id DESC LIMIT 200
     `, [req.session.user.id]);
 
     const rows = result.rows.map(o => `
@@ -846,14 +724,7 @@ app.get("/orders", requireLogin, async (req, res) => {
     res.send(page("My Orders", `
       <div class="card tablewrap">
         <table>
-          <tr>
-            <th>ID</th>
-            <th>Service</th>
-            <th>Quantity</th>
-            <th>Charge</th>
-            <th>Status</th>
-            <th>Provider ID</th>
-          </tr>
+          <tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Provider ID</th></tr>
           ${rows}
         </table>
       </div>
@@ -869,69 +740,33 @@ app.get("/add-funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
       <h3>Scan QR & Pay</h3>
-
       <p>Minimum Amount: ₹100</p>
       <p>Maximum Amount: ₹2,000</p>
-
-      <div style="
-        text-align:center;
-        background:white;
-        padding:15px;
-        border-radius:10px;
-        margin:15px 0
-      ">
-        <img
-          src="/public/payment-qr.png"
-          alt="Payment QR Code"
-          style="width:100%;max-width:280px;height:auto"
-        >
+      <div style="text-align:center;background:white;padding:15px;border-radius:10px;margin:15px 0">
+        <img src="/public/payment-qr.png" alt="Payment QR Code"
+          style="width:100%;max-width:280px;height:auto">
       </div>
-
       <p>Scan this QR using any UPI app.</p>
-
       <form method="POST">
         <label>Amount (₹)</label>
-        <input
-          name="amount"
-          type="number"
-          min="100"
-          max="2000"
-          step="1"
-          required
-        >
-
+        <input name="amount" type="number" min="100" max="2000" step="1" required>
         <label>UTR / Transaction ID</label>
-        <input
-          name="utr"
-          maxlength="100"
-          placeholder="Enter payment UTR"
-          required
-        >
-
+        <input name="utr" maxlength="100" placeholder="Enter payment UTR" required>
         <button type="submit">Submit Payment</button>
       </form>
     </div>
   `, req.session.user));
 });
 
-// ADD FUNDS SUBMIT - ONLY ONE ROUTE
+// ADD FUNDS SUBMIT
 app.post("/add-funds", requireLogin, async (req, res) => {
   try {
     const amount = Number(req.body.amount);
     const utr = String(req.body.utr || "").trim();
 
-    if (
-      !Number.isInteger(amount) ||
-      amount < 100 ||
-      amount > 2000 ||
-      !utr ||
-      utr.length > 100
-    ) {
-      return res.status(400).send(page(
-        "Payment Error",
-        "<div class='card'>Amount must be between ₹100 and ₹2,000 and a valid UTR is required.</div>",
-        req.session.user
-      ));
+    if (!Number.isInteger(amount) || amount < 100 ||
+        amount > 2000 || !utr || utr.length > 100) {
+      return res.status(400).send("Amount must be ₹100-₹2,000 and valid UTR is required.");
     }
 
     await db(`
@@ -959,11 +794,7 @@ app.get("/support", requireLogin, (req, res) => {
     <div class="card">
       <form method="POST">
         <label>Message</label>
-        <textarea
-          name="message"
-          required
-          maxlength="2000"
-        ></textarea>
+        <textarea name="message" required maxlength="2000"></textarea>
         <button type="submit">Send Message</button>
       </form>
     </div>
@@ -975,9 +806,7 @@ app.post("/support", requireLogin, async (req, res) => {
   try {
     const message = String(req.body.message || "").trim();
 
-    if (!message) {
-      return res.status(400).send("Message required.");
-    }
+    if (!message) return res.status(400).send("Message required.");
 
     await db(
       "INSERT INTO tickets(user_id,message) VALUES($1,$2)",
@@ -1002,26 +831,10 @@ app.get("/admin", requireAdmin, async (req, res) => {
     ]);
 
     res.send(page("Admin Panel", `
-      <div class="card">
-        <h3>Users</h3>
-        ${users.rows[0].count}
-      </div>
-
-      <div class="card">
-        <h3>Services</h3>
-        ${services.rows[0].count}
-      </div>
-
-      <div class="card">
-        <h3>Orders</h3>
-        ${orders.rows[0].count}
-      </div>
-
-      <div class="card">
-        <h3>Pending Payments</h3>
-        ${payments.rows[0].count}
-      </div>
-
+      <div class="card"><h3>Users</h3>${users.rows[0].count}</div>
+      <div class="card"><h3>Services</h3>${services.rows[0].count}</div>
+      <div class="card"><h3>Orders</h3>${orders.rows[0].count}</div>
+      <div class="card"><h3>Pending Payments</h3>${payments.rows[0].count}</div>
       <div class="card">
         <a class="btn" href="/admin/services">Manage Services</a>
         <a class="btn" href="/admin/payments">Payments</a>
@@ -1037,9 +850,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
 // ADMIN SERVICES PAGE
 app.get("/admin/services", requireAdmin, async (req, res) => {
   try {
-    const result = await db(
-      "SELECT * FROM services ORDER BY category,name"
-    );
+    const result = await db("SELECT * FROM services ORDER BY category,name");
 
     const rows = result.rows.map(s => `
       <tr>
@@ -1050,8 +861,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <td>₹${Number(s.rate).toFixed(2)}</td>
         <td>${s.active ? "Active" : "Off"}</td>
         <td>
-          <form method="POST"
-            action="/admin/services/${s.id}/toggle">
+          <form method="POST" action="/admin/services/${s.id}/toggle">
             <button>${s.active ? "Disable" : "Enable"}</button>
           </form>
         </td>
@@ -1062,22 +872,15 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
       <div class="card">
         <h3>Bulk Service Control</h3>
         <p>एक क्लिक में सभी Services बंद करें।</p>
-
-        <form
-          method="POST"
-          action="/admin/services/disable-all"
-          onsubmit="return confirm('क्या आप सभी Services Disable करना चाहते हैं?')"
-        >
-          <button type="submit" class="danger">
-            Disable All Services
-          </button>
+        <form method="POST" action="/admin/services/disable-all"
+          onsubmit="return confirm('क्या आप सभी Services Disable करना चाहते हैं?')">
+          <button type="submit" class="danger">Disable All Services</button>
         </form>
       </div>
 
       <div class="card">
         <h3>Add Service</h3>
-
-        <form method="POST">
+        <form method="POST" action="/admin/services">
           <label>Service Name</label>
           <input name="name" required>
 
@@ -1097,33 +900,13 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <input name="provider_id" required>
 
           <label>Rate per 1000 (₹)</label>
-          <input
-            name="rate"
-            type="number"
-            step="0.0001"
-            min="0"
-            required
-          >
+          <input name="rate" type="number" step="0.0001" min="0.0001" required>
 
           <label>Minimum</label>
-          <input
-            name="min"
-            type="number"
-            value="100"
-            min="100"
-            max="10000000"
-            required
-          >
+          <input name="min" type="number" value="100" min="100" max="10000000" required>
 
           <label>Maximum</label>
-          <input
-            name="max"
-            type="number"
-            value="1000000"
-            min="100"
-            max="10000000"
-            required
-          >
+          <input name="max" type="number" value="1000000" min="100" max="10000000" required>
 
           <label>Description</label>
           <textarea name="description"></textarea>
@@ -1135,13 +918,8 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
       <div class="card tablewrap">
         <table>
           <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Provider ID</th>
-            <th>Rate</th>
-            <th>Status</th>
-            <th>Action</th>
+            <th>ID</th><th>Name</th><th>Category</th>
+            <th>Provider ID</th><th>Rate</th><th>Status</th><th>Action</th>
           </tr>
           ${rows}
         </table>
@@ -1153,7 +931,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
   }
 });
 
-// ADD SERVICE
+// ADD SERVICE - FIXED
 app.post("/admin/services", requireAdmin, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
@@ -1166,64 +944,63 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
 
     if (
       !name ||
+      !category ||
       !providerId ||
       !Number.isFinite(rate) ||
+      rate <= 0 ||
       !Number.isInteger(min) ||
       !Number.isInteger(max) ||
-      rate < 0 ||
       min < 100 ||
       max < min ||
       max > 10000000
     ) {
-      return res.status(400).send("Invalid service details.");
+      return res.status(400).send("Invalid service details. Check all fields.");
     }
 
-    await db(`
+    const result = await db(`
       INSERT INTO services
-      (name,category,provider_id,rate,min,max,description,active)
+      (provider_id,name,category,rate,min,max,description,active)
       VALUES($1,$2,$3,$4,$5,$6,$7,TRUE)
+      RETURNING id
     `, [
+      providerId,
       name,
       category,
-      providerId,
       rate,
       min,
       max,
       description
     ]);
 
-    res.redirect("/admin/services");
+    console.log("SERVICE ADDED:", result.rows[0].id);
+    return res.redirect("/admin/services");
+
   } catch (error) {
-    console.error("Add service error:", error);
-    res.status(500).send("Could not add service.");
-    {
-      console.error("Database details:", error.message, error.code, error.detail);
+    console.error("ADD SERVICE ERROR:", error);
+    console.error("ERROR MESSAGE:", error.message);
+    console.error("ERROR CODE:", error.code);
+    console.error("ERROR DETAIL:", error.detail);
+
+    return res.status(500).send(
+      "Could not add service: " + esc(error.message)
+    );
+  }
 });
 
 // DISABLE ALL SERVICES
-app.post(
-  "/admin/services/disable-all",
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const result = await db(`
-        UPDATE services
-        SET active=FALSE
-        WHERE active=TRUE
-      `);
+app.post("/admin/services/disable-all", requireAdmin, async (req, res) => {
+  try {
+    const result = await db(`
+      UPDATE services SET active=FALSE WHERE active=TRUE
+    `);
 
-      console.log(
-        "All services disabled:",
-        result.rowCount
-      );
-
-      res.redirect("/admin/services");
-    } catch (error) {
-      console.error("Disable all services error:", error);
-      res.status(500).send("Could not disable services.");
-    }
+    console.log("All services disabled:", result.rowCount);
+    res.redirect("/admin/services");
+  } catch (error) {
+    console.error("Disable all services error:", error);
+    res.status(500).send("Could not disable services.");
   }
-);
+});
 
 // ENABLE / DISABLE ONE SERVICE
 app.post("/admin/services/:id/toggle", requireAdmin, async (req, res) => {
@@ -1253,8 +1030,7 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
       SELECT p.*,u.username
       FROM payments p
       LEFT JOIN users u ON u.id=p.user_id
-      ORDER BY p.id DESC
-      LIMIT 200
+      ORDER BY p.id DESC LIMIT 200
     `);
 
     const rows = result.rows.map(p => `
@@ -1265,14 +1041,9 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
         <td>${esc(p.utr)}</td>
         <td>${esc(p.status)}</td>
         <td>
-          ${
-            p.status === "Pending"
-              ? `<form method="POST"
-                   action="/admin/payments/${p.id}/approve">
-                   <button>Approve</button>
-                 </form>`
-              : "-"
-          }
+          ${p.status === "Pending"
+            ? `<form method="POST" action="/admin/payments/${p.id}/approve"><button>Approve</button></form>`
+            : "-"}
         </td>
       </tr>
     `).join("");
@@ -1280,14 +1051,7 @@ app.get("/admin/payments", requireAdmin, async (req, res) => {
     res.send(page("Payments", `
       <div class="card tablewrap">
         <table>
-          <tr>
-            <th>ID</th>
-            <th>User</th>
-            <th>Amount</th>
-            <th>UTR</th>
-            <th>Status</th>
-            <th>Action</th>
-          </tr>
+          <tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
           ${rows}
         </table>
       </div>
@@ -1312,10 +1076,7 @@ app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
       [Number(req.params.id)]
     );
 
-    if (
-      !result.rowCount ||
-      result.rows[0].status !== "Pending"
-    ) {
+    if (!result.rowCount || result.rows[0].status !== "Pending") {
       throw new Error("Payment not found or already processed.");
     }
 
@@ -1336,9 +1097,7 @@ app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
 
     res.redirect("/admin/payments");
   } catch (error) {
-    if (transactionStarted) {
-      await client.query("ROLLBACK");
-    }
+    if (transactionStarted) await client.query("ROLLBACK");
 
     console.error("Approve payment error:", error);
     res.status(400).send(esc(error.message));
@@ -1355,8 +1114,7 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
       FROM orders o
       LEFT JOIN users u ON u.id=o.user_id
       LEFT JOIN services s ON s.id=o.service_id
-      ORDER BY o.id DESC
-      LIMIT 200
+      ORDER BY o.id DESC LIMIT 200
     `);
 
     const rows = result.rows.map(o => `
@@ -1368,22 +1126,11 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
         <td>${esc(o.status)}</td>
         <td>${esc(o.provider_order_id || "-")}</td>
         <td>
-          <form method="POST"
-            action="/admin/orders/${o.id}/status">
+          <form method="POST" action="/admin/orders/${o.id}/status">
             <select name="status">
-              ${[
-                "Pending",
-                "Processing",
-                "In progress",
-                "Completed",
-                "Partial",
-                "Canceled",
-                "Failed"
-              ].map(x => `
-                <option ${o.status === x ? "selected" : ""}>
-                  ${x}
-                </option>
-              `).join("")}
+              ${["Pending","Processing","In progress","Completed","Partial","Canceled","Failed"].map(x =>
+                `<option ${o.status === x ? "selected" : ""}>${x}</option>`
+              ).join("")}
             </select>
             <button>Save</button>
           </form>
@@ -1395,13 +1142,8 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
       <div class="card tablewrap">
         <table>
           <tr>
-            <th>ID</th>
-            <th>User</th>
-            <th>Service</th>
-            <th>Qty</th>
-            <th>Status</th>
-            <th>Provider ID</th>
-            <th>Update</th>
+            <th>ID</th><th>User</th><th>Service</th>
+            <th>Qty</th><th>Status</th><th>Provider ID</th><th>Update</th>
           </tr>
           ${rows}
         </table>
@@ -1417,13 +1159,8 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
 app.post("/admin/orders/:id/status", requireAdmin, async (req, res) => {
   try {
     const allowed = [
-      "Pending",
-      "Processing",
-      "In progress",
-      "Completed",
-      "Partial",
-      "Canceled",
-      "Failed"
+      "Pending", "Processing", "In progress",
+      "Completed", "Partial", "Canceled", "Failed"
     ];
 
     const status = String(req.body.status || "");
@@ -1452,15 +1189,12 @@ async function syncProviderStatuses() {
       FROM orders
       WHERE provider_order_id IS NOT NULL
       AND status NOT IN ('Completed','Canceled','Failed')
-      ORDER BY id DESC
-      LIMIT 30
+      ORDER BY id DESC LIMIT 30
     `);
 
     for (const order of result.rows) {
       try {
-        const data = await providerOrderStatus(
-          order.provider_order_id
-        );
+        const data = await providerOrderStatus(order.provider_order_id);
 
         const raw = String(
           data?.status ?? data?.data?.status ?? ""
@@ -1484,10 +1218,7 @@ async function syncProviderStatuses() {
           );
         }
       } catch (error) {
-        console.error(
-          "Provider status error:",
-          error.message
-        );
+        console.error("Provider status error:", error.message);
       }
     }
   } catch (error) {
@@ -1506,16 +1237,10 @@ async function start() {
 
     const server = app.listen(
       process.env.PORT || 3000,
-      () => {
-        console.log("ROYAL PANEL running.");
-      }
+      () => console.log("ROYAL PANEL running.")
     );
 
-    const timer = setInterval(
-      syncProviderStatuses,
-      60000
-    );
-
+    const timer = setInterval(syncProviderStatuses, 60000);
     timer.unref();
 
     process.on("SIGTERM", async () => {
@@ -1526,6 +1251,7 @@ async function start() {
         process.exit(0);
       });
     });
+
   } catch (error) {
     console.error("SERVER START FAILED:", error);
     process.exit(1);
