@@ -754,9 +754,9 @@ app.post("/add-funds", requireLogin, async (req, res) => {
     const amount = Number(req.body.amount);
     const utr = String(req.body.utr || "").trim();
 
-    if (!Number.isInteger(amount) || amount < 100 ||
-        amount > 2000 || !utr || utr.length > 100) {
-      return res.status(400).send("Amount must be ₹100-₹2,000 and valid UTR is required.");
+    if (!Number.isInteger(amount) || amount < 10 ||
+        amount > 2000 || !utr || utr.length > 10) {
+      return res.status(400).send("Amount must be ₹10-₹2,000 and valid UTR is required.");
     }
 
     await db(`
