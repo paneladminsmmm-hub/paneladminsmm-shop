@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -25,7 +24,6 @@ const db = (sql, params = []) => pool.query(sql, params);
 
 const PROVIDER_URL = process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
-const USD_TO_INR = Number(process.env.USD_TO_INR || 0);
 
 app.use(session({
   name: "royalpanel.sid",
@@ -156,11 +154,16 @@ function providerStatus(status) {
   return status || "Processing";
 }
 
+// Provider का rate API से जैसा आता है, वैसा ही सेव होगा।
+// इसमें कोई USD/INR conversion नहीं होगा।
 function calculateProviderRate(providerRate) {
-  if (!Number.isFinite(USD_TO_INR) || USD_TO_INR <= 0) {
-    throw new Error("Render में सही USD_TO_INR Environment Variable सेट करो।");
+  const rate = Number(providerRate);
+
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error("SocialAdd से Provider Rate सही नहीं मिला।");
   }
-  return Number(providerRate) * USD_TO_INR;
+
+  return rate;
 }
 
 function categoryFromName(name, category) {
@@ -938,7 +941,7 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
         <h3>SocialAdd API Connection</h3>
         <p>API URL: ${esc(PROVIDER_URL)}</p>
         <p>API Key: ${PROVIDER_KEY ? "Configured" : "Not configured"}</p>
-        <p>USD to INR: ${USD_TO_INR > 0 ? USD_TO_INR : "Not configured"}</p>
+        <p>Provider Rate: API से बिना conversion के import होगा</p>
         <p>Imported SocialAdd services: ${counts.rows[0].imported}</p>
         <p>Active SocialAdd services: ${counts.rows[0].active}</p>
         <form method="POST" action="/admin/provider/test">
@@ -948,7 +951,7 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
           onsubmit="return confirm('सिर्फ Instagram services import होंगी। बाकी services inactive रहेंगी।')">
           <button class="success">Import / Update Instagram Services</button>
         </form>
-        <p><small>Import करने पर सिर्फ Instagram services अपडेट होंगी। Admin Services में जाकर बिक्री की कीमत एडिट कर सकते हो।</small></p>
+        <p><small>Provider Rate API से आएगा। Selling Price तुम Admin Services में खुद सेट कर सकते हो। दोबारा Import करने पर तुम्हारा Selling Price नहीं बदलेगा।</small></p>
       </div>
       <div class="card">
         <a class="btn" href="/admin/services">Manage Service Prices</a>
@@ -967,8 +970,8 @@ app.post("/admin/provider/test", requireAdmin, async (req, res) => {
     const data = await providerRequest({ action: "balance" });
     res.send(page("Provider Connection", `
       <div class="card"><h3>SocialAdd API Connected</h3>
-      <p>Provider Balance: ${esc(data.balance)}</p>
-      <p>Currency: ${esc(data.currency || "USD")}</p>
+      <p>Provider Balance: ${esc(data.balance ?? "Not returned")}</p>
+      <p>Currency: ${esc(data.currency || "API ने currency नहीं बताई")}</p>
       <a class="btn" href="/admin/provider">Back</a></div>
     `, req.session.user));
   } catch (e) {
@@ -985,9 +988,6 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
 
   try {
     if (!PROVIDER_KEY) throw new Error("Render में SOCIALADD_API_KEY सेट करो।");
-    if (!Number.isFinite(USD_TO_INR) || USD_TO_INR <= 0) {
-      throw new Error("Render में USD_TO_INR का सही INR conversion rate सेट करो।");
-    }
 
     const services = await providerRequest({ action: "services" });
     if (!Array.isArray(services)) throw new Error("Provider services list सही नहीं है।");
@@ -1025,7 +1025,8 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         continue;
       }
 
-      const retailRate = calculateProviderRate(providerRate);
+      // Provider का exact numeric rate सेव होगा।
+      const exactProviderRate = calculateProviderRate(providerRate);
 
       await client.query(`
         INSERT INTO services
@@ -1046,7 +1047,7 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
       `, [
         providerId, name, "Instagram",
         `SocialAdd ${type} service`,
-        retailRate, min, max, type, providerRate
+        exactProviderRate, min, max, type, exactProviderRate
       ]);
 
       imported++;
@@ -1060,6 +1061,8 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         <h3>Import Complete</h3>
         <p>Instagram services imported: ${imported}</p>
         <p>Other services skipped: ${skipped}</p>
+        <p>Provider Rate API से सीधे सेव हुआ है।</p>
+        <p>पुरानी सर्विस का Selling Price सुरक्षित रखा गया है।</p>
         <p>अब सिर्फ Instagram services active रहेंगी।</p>
         <a class="btn" href="/admin/services">Manage Service Prices</a>
         <a class="btn" href="/admin/provider">Provider Page</a>
@@ -1134,6 +1137,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <td>${esc(s.category)}</td>
         <td><strong>${esc(s.provider_id || "-")}</strong></td>
         <td>${esc(s.provider_source || "manual")}</td>
+        <td>${s.provider_rate === null ? "-" : Number(s.provider_rate).toFixed(4)}</td>
         <td>₹${Number(s.rate).toFixed(2)}</td>
         <td>${s.min}</td>
         <td>${s.max}</td>
@@ -1187,10 +1191,12 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
 
       <div class="card tablewrap">
         <h3>Services and Provider IDs</h3>
+        <p><small>Provider Rate = SocialAdd API से आया हुआ rate (बिना conversion)। Selling Rate = तुम्हारी वेबसाइट की ग्राहक वाली कीमत (₹)।</small></p>
         <table>
           <tr>
             <th>Database ID</th><th>Service Name</th><th>Category</th>
-            <th>Provider Service ID</th><th>Provider</th><th>Rate</th>
+            <th>Provider Service ID</th><th>Provider</th>
+            <th>Provider Rate</th><th>Selling Rate (₹)</th>
             <th>Min</th><th>Max</th><th>Status</th><th>Action</th>
           </tr>
           ${rows}
@@ -1216,7 +1222,7 @@ app.get("/admin/services/:id/edit", requireAdmin, async (req, res) => {
       <p>Database Service ID: ${s.id}</p>
       <p>Provider: ${esc(s.provider_source || "manual")}</p>
       <p>Provider Type: ${esc(s.provider_type || "Default")}</p>
-      <p>Provider Rate: ${esc(s.provider_rate ?? "-")} USD / 1K</p>
+      <p>Provider Rate (API): ${s.provider_rate === null ? "Not available" : Number(s.provider_rate).toFixed(4)} / 1K</p>
       <form method="POST" action="/admin/services/${s.id}/edit">
         <label>Service Name</label><input name="name" value="${esc(s.name)}" required>
         <label>Category</label><input name="category" value="${esc(s.category)}" required>
