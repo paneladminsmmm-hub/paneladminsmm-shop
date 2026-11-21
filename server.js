@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -5,12 +6,8 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const { Pool } = require("pg");
-
-const {
-  providerAddOrder,
-  providerOrderStatus
-} = require("./src/provider");
 
 const app = express();
 
@@ -49,6 +46,13 @@ const authLimit = rateLimit({
   legacyHeaders: false
 });
 
+const resellerApiLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({
     "&": "&amp;",
@@ -82,6 +86,7 @@ function page(title, content, user = null) {
         <a href="/orders">My Orders</a>
         <a href="/add-funds">Add Funds</a>
         <a href="/support">Support</a>
+        <a href="/api-keys">My API</a>
         ${user.is_admin ? '<a href="/admin">Admin Panel</a>' : ""}
         <a href="/logout">Logout</a>
       </nav>
@@ -237,6 +242,18 @@ async function setupDatabase() {
       user_id INTEGER REFERENCES users(id),
       message TEXT,
       status TEXT DEFAULT 'Open',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // RESELLER API KEYS
+  await db(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      key_hash TEXT NOT NULL UNIQUE,
+      key_prefix TEXT NOT NULL,
+      active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
@@ -428,6 +445,7 @@ app.get("/dashboard", requireLogin, async (req, res) => {
         <p>${esc(req.session.user.email)}</p>
         <h2>Wallet Balance: ₹${Number(result.rows[0]?.balance || 0).toFixed(2)}</h2>
         <a class="btn" href="/new-order">Place New Order</a>
+        <a class="btn" href="/api-keys">My Reseller API</a>
       </div>
     `, req.session.user));
   } catch (error) {
@@ -583,7 +601,7 @@ app.get("/new-order", requireLogin, async (req, res) => {
   }
 });
 
-// PLACE NEW ORDER
+// PLACE NEW ORDER - MANUAL PENDING ORDER
 app.post("/new-order", requireLogin, async (req, res) => {
   const client = await pool.connect();
   let transactionStarted = false;
@@ -626,10 +644,6 @@ app.post("/new-order", requireLogin, async (req, res) => {
       throw new Error(`Quantity must be between ${minimum} and ${maximum}.`);
     }
 
-    if (!service.provider_id) {
-      throw new Error("Provider ID missing for this service.");
-    }
-
     const charge = Number(service.rate) * quantity / 1000;
 
     if (!Number.isFinite(charge) || charge <= 0) {
@@ -640,21 +654,6 @@ app.post("/new-order", requireLogin, async (req, res) => {
       throw new Error("Insufficient wallet balance. Add funds first.");
     }
 
-    const providerResult = await providerAddOrder(
-      service.provider_id,
-      link,
-      quantity
-    );
-
-    const providerOrderId =
-      providerResult?.order ??
-      providerResult?.order_id ??
-      providerResult?.data?.order;
-
-    if (!providerOrderId) {
-      throw new Error("Provider did not return an order ID.");
-    }
-
     await client.query(
       "UPDATE users SET balance=balance-$1 WHERE id=$2",
       [charge, user.id]
@@ -662,12 +661,9 @@ app.post("/new-order", requireLogin, async (req, res) => {
 
     await client.query(`
       INSERT INTO orders
-      (user_id,service_id,provider_order_id,link,quantity,charge,status)
-      VALUES($1,$2,$3,$4,$5,$6,'Processing')
-    `, [
-      user.id, service.id, String(providerOrderId),
-      link, quantity, charge
-    ]);
+      (user_id,service_id,link,quantity,charge,status)
+      VALUES($1,$2,$3,$4,$5,'Pending')
+    `, [user.id, service.id, link, quantity, charge]);
 
     await client.query("COMMIT");
     transactionStarted = false;
@@ -809,6 +805,290 @@ app.post("/support", requireLogin, async (req, res) => {
   }
 });
 
+// RESELLER API KEY PAGE
+app.get("/api-keys", requireLogin, async (req, res) => {
+  try {
+    const result = await db(
+      `SELECT id,key_prefix,active,created_at
+       FROM api_keys WHERE user_id=$1 ORDER BY id DESC`,
+      [req.session.user.id]
+    );
+
+    const rows = result.rows.map(k => `
+      <tr>
+        <td>${k.id}</td>
+        <td>${esc(k.key_prefix)}...</td>
+        <td>${k.active ? "Enabled" : "Disabled"}</td>
+        <td>
+          <form method="POST" action="/api-keys/${k.id}/toggle">
+            <button>${k.active ? "Disable" : "Enable"}</button>
+          </form>
+          <form method="POST" action="/api-keys/${k.id}/delete"
+            onsubmit="return confirm('Revoke this API key?')">
+            <button class="danger">Revoke</button>
+          </form>
+        </td>
+      </tr>
+    `).join("");
+
+    res.send(page("My Reseller API", `
+      <div class="card">
+        <h3>Your API URL</h3>
+        <input readonly value="${esc(process.env.APP_URL || "https://paneladminsmm-shop-1.onrender.com")}/api/v2">
+        <form method="POST" action="/api-keys/create">
+          <button class="success">Generate New API Key</button>
+        </form>
+      </div>
+      <div class="card tablewrap">
+        <h3>My API Keys</h3>
+        <table>
+          <tr><th>ID</th><th>Key Prefix</th><th>Status</th><th>Action</th></tr>
+          ${rows}
+        </table>
+      </div>
+      <div class="card">
+        <h3>API Actions</h3>
+        <p>services - View Services</p>
+        <p>add - Place Order</p>
+        <p>status - Check Order</p>
+        <p>balance - Check Balance</p>
+      </div>
+    `, req.session.user));
+  } catch (error) {
+    console.error("API page error:", error);
+    res.status(500).send("API page error");
+  }
+});
+
+// CREATE API KEY
+app.post("/api-keys/create", requireLogin, async (req, res) => {
+  try {
+    const key = "ROYAL_" + crypto.randomBytes(32).toString("hex");
+    const hash = crypto.createHash("sha256").update(key).digest("hex");
+    const prefix = key.slice(0, 12);
+
+    await db(`
+      INSERT INTO api_keys(user_id,key_hash,key_prefix)
+      VALUES($1,$2,$3)
+    `, [req.session.user.id, hash, prefix]);
+
+    res.send(page("API Key Created", `
+      <div class="card">
+        <h3>Your New API Key</h3>
+        <p>इसे सुरक्षित रखो। यह Key दोबारा पूरी दिखाई नहीं जाएगी।</p>
+        <input id="newApiKey" readonly value="${esc(key)}">
+        <button onclick="navigator.clipboard.writeText(document.getElementById('newApiKey').value)">
+          Copy API Key
+        </button>
+        <p><a href="/api-keys">Back to API Management</a></p>
+      </div>
+    `, req.session.user));
+  } catch (error) {
+    console.error("Create API key error:", error);
+    res.status(500).send("Could not create API key.");
+  }
+});
+
+// ENABLE / DISABLE OWN API KEY
+app.post("/api-keys/:id/toggle", requireLogin, async (req, res) => {
+  try {
+    await db(`
+      UPDATE api_keys
+      SET active=NOT active
+      WHERE id=$1 AND user_id=$2
+    `, [Number(req.params.id), req.session.user.id]);
+
+    res.redirect("/api-keys");
+  } catch (error) {
+    console.error("API key toggle error:", error);
+    res.status(500).send("Could not update API key.");
+  }
+});
+
+// REVOKE OWN API KEY
+app.post("/api-keys/:id/delete", requireLogin, async (req, res) => {
+  try {
+    await db(`
+      DELETE FROM api_keys
+      WHERE id=$1 AND user_id=$2
+    `, [Number(req.params.id), req.session.user.id]);
+
+    res.redirect("/api-keys");
+  } catch (error) {
+    console.error("API key revoke error:", error);
+    res.status(500).send("Could not revoke API key.");
+  }
+});
+
+// ROYAL PANEL RESELLER API
+app.post("/api/v2", resellerApiLimit, async (req, res) => {
+  const action = String(req.body.action || "").toLowerCase();
+  const key = String(req.body.key || "");
+
+  if (!key || !action) {
+    return res.json({ error: "Invalid API request" });
+  }
+
+  const hash = crypto.createHash("sha256").update(key).digest("hex");
+
+  try {
+    const keyResult = await db(`
+      SELECT a.user_id
+      FROM api_keys a
+      JOIN users u ON u.id=a.user_id
+      WHERE a.key_hash=$1 AND a.active=TRUE
+      LIMIT 1
+    `, [hash]);
+
+    if (!keyResult.rowCount) {
+      return res.json({ error: "Invalid or disabled API key" });
+    }
+
+    const userId = keyResult.rows[0].user_id;
+
+    if (action === "services") {
+      const services = await db(`
+        SELECT id,name,category,rate,min,max,description
+        FROM services
+        WHERE active=TRUE
+        ORDER BY id
+      `);
+
+      return res.json(services.rows.map(s => ({
+        service: s.id,
+        name: s.name,
+        type: "Default",
+        category: s.category,
+        rate: Number(s.rate).toFixed(4),
+        min: s.min,
+        max: s.max,
+        description: s.description
+      })));
+    }
+
+    if (action === "balance") {
+      const result = await db(
+        "SELECT balance FROM users WHERE id=$1",
+        [userId]
+      );
+
+      return res.json({
+        balance: Number(result.rows[0]?.balance || 0).toFixed(2),
+        currency: "INR"
+      });
+    }
+
+    if (action === "status") {
+      const orderId = Number(req.body.order);
+
+      if (!Number.isInteger(orderId) || orderId < 1) {
+        return res.json({ error: "Invalid order ID" });
+      }
+
+      const result = await db(`
+        SELECT id,status,charge,quantity
+        FROM orders
+        WHERE id=$1 AND user_id=$2
+      `, [orderId, userId]);
+
+      if (!result.rowCount) {
+        return res.json({ error: "Order not found" });
+      }
+
+      const order = result.rows[0];
+
+      return res.json({
+        charge: Number(order.charge).toFixed(2),
+        status: order.status,
+        quantity: order.quantity
+      });
+    }
+
+    if (action === "add") {
+      const serviceId = Number(req.body.service);
+      const quantity = Number(req.body.quantity);
+      const link = String(req.body.link || "").trim();
+
+      if (!Number.isInteger(serviceId) ||
+          !Number.isInteger(quantity) ||
+          !/^https?:\/\//i.test(link)) {
+        return res.json({ error: "Invalid order details" });
+      }
+
+      const client = await pool.connect();
+      let transactionStarted = false;
+
+      try {
+        await client.query("BEGIN");
+        transactionStarted = true;
+
+        const userResult = await client.query(
+          "SELECT * FROM users WHERE id=$1 FOR UPDATE",
+          [userId]
+        );
+
+        const serviceResult = await client.query(
+          "SELECT * FROM services WHERE id=$1 AND active=TRUE",
+          [serviceId]
+        );
+
+        if (!userResult.rowCount || !serviceResult.rowCount) {
+          throw new Error("User or service not found");
+        }
+
+        const user = userResult.rows[0];
+        const service = serviceResult.rows[0];
+
+        if (quantity < Number(service.min) ||
+            quantity > Number(service.max)) {
+          throw new Error("Quantity outside service limits");
+        }
+
+        const charge = Number(service.rate) * quantity / 1000;
+
+        if (!Number.isFinite(charge) || charge <= 0) {
+          throw new Error("Invalid service price");
+        }
+
+        if (Number(user.balance) < charge) {
+          throw new Error("Insufficient balance");
+        }
+
+        await client.query(
+          "UPDATE users SET balance=balance-$1 WHERE id=$2",
+          [charge, userId]
+        );
+
+        const order = await client.query(`
+          INSERT INTO orders
+          (user_id,service_id,link,quantity,charge,status)
+          VALUES($1,$2,$3,$4,$5,'Pending')
+          RETURNING id
+        `, [userId, serviceId, link, quantity, charge]);
+
+        await client.query("COMMIT");
+        transactionStarted = false;
+
+        return res.json({ order: order.rows[0].id });
+      } catch (error) {
+        if (transactionStarted) {
+          await client.query("ROLLBACK");
+        }
+        console.error("API order error:", error.message);
+        return res.json({ error: error.message || "Order failed" });
+      } finally {
+        client.release();
+      }
+    }
+
+    return res.json({ error: "Invalid action" });
+
+  } catch (error) {
+    console.error("Reseller API error:", error.message);
+    return res.json({ error: "API request failed" });
+  }
+});
+
 // ADMIN DASHBOARD
 app.get("/admin", requireAdmin, async (req, res) => {
   try {
@@ -828,11 +1108,77 @@ app.get("/admin", requireAdmin, async (req, res) => {
         <a class="btn" href="/admin/services">Manage Services</a>
         <a class="btn" href="/admin/payments">Payments</a>
         <a class="btn" href="/admin/orders">Orders</a>
+        <a class="btn" href="/admin/api">API Management</a>
       </div>
     `, req.session.user));
   } catch (error) {
     console.error("Admin error:", error);
     res.status(500).send("Admin error");
+  }
+});
+
+// ADMIN API MANAGEMENT
+app.get("/admin/api", requireAdmin, async (req, res) => {
+  try {
+    const result = await db(`
+      SELECT a.id,a.key_prefix,a.active,a.created_at,u.username
+      FROM api_keys a
+      JOIN users u ON u.id=a.user_id
+      ORDER BY a.id DESC LIMIT 300
+    `);
+
+    const rows = result.rows.map(k => `
+      <tr>
+        <td>${k.id}</td>
+        <td>${esc(k.username)}</td>
+        <td>${esc(k.key_prefix)}...</td>
+        <td>${k.active ? "Enabled" : "Disabled"}</td>
+        <td>
+          <form method="POST" action="/admin/api/${k.id}/toggle">
+            <button>${k.active ? "Disable" : "Enable"}</button>
+          </form>
+        </td>
+      </tr>
+    `).join("");
+
+    res.send(page("API Management", `
+      <div class="card">
+        <h3>ROYAL PANEL Reseller API</h3>
+        <p>API URL:</p>
+        <input readonly value="${esc(process.env.APP_URL || "https://paneladminsmm-shop-1.onrender.com")}/api/v2">
+        <p>Reseller अपने Dashboard से API Key बना सकते हैं।</p>
+      </div>
+      <div class="card tablewrap">
+        <table>
+          <tr><th>ID</th><th>Reseller</th><th>Key Prefix</th><th>Status</th><th>Action</th></tr>
+          ${rows}
+        </table>
+      </div>
+    `, req.session.user));
+  } catch (error) {
+    console.error("Admin API page error:", error);
+    res.status(500).send("Admin API page error");
+  }
+});
+
+// ADMIN ENABLE / DISABLE API KEY
+app.post("/admin/api/:id/toggle", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).send("Invalid API key ID.");
+    }
+
+    await db(
+      "UPDATE api_keys SET active=NOT active WHERE id=$1",
+      [id]
+    );
+
+    res.redirect("/admin/api");
+  } catch (error) {
+    console.error("Admin API toggle error:", error);
+    res.status(500).send("Could not update API key.");
   }
 });
 
@@ -886,12 +1232,10 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
       <div class="card">
         <h3>Bulk Service Control</h3>
         <p>एक क्लिक में सभी Services बंद या चालू करें।</p>
-
         <form method="POST" action="/admin/services/disable-all"
           onsubmit="return confirm('क्या आप सभी Services Disable करना चाहते हैं?')">
           <button type="submit" class="danger">Disable All Services</button>
         </form>
-
         <form method="POST" action="/admin/services/enable-all"
           onsubmit="return confirm('क्या आप सभी Services Enable करना चाहते हैं?')"
           style="margin-top:10px">
@@ -904,7 +1248,6 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <form method="POST" action="/admin/services">
           <label>Service Name</label>
           <input name="name" required>
-
           <label>Category</label>
           <select name="category">
             <option>Instagram</option>
@@ -916,22 +1259,16 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
             <option>Telegram</option>
             <option>Other</option>
           </select>
-
           <label>Provider Service ID</label>
           <input name="provider_id" required>
-
           <label>Rate per 1000 (₹)</label>
           <input name="rate" type="number" step="0.0001" min="0.0001" required>
-
           <label>Minimum</label>
           <input name="min" type="number" value="100" min="100" max="10000000" required>
-
           <label>Maximum</label>
           <input name="max" type="number" value="1000000" min="100" max="10000000" required>
-
           <label>Description</label>
           <textarea name="description"></textarea>
-
           <button type="submit">Add / Update Service</button>
         </form>
       </div>
@@ -979,32 +1316,24 @@ app.get("/admin/services/:id/edit", requireAdmin, async (req, res) => {
       <div class="card">
         <h3>Update Existing Service</h3>
         <p>Database Service ID: ${s.id}</p>
-
         <form method="POST" action="/admin/services/${s.id}/edit">
           <label>Service Name</label>
           <input name="name" value="${esc(s.name)}" required>
-
           <label>Category</label>
           <input name="category" value="${esc(s.category)}" required>
-
           <label>Provider Service ID</label>
           <input name="provider_id" value="${esc(s.provider_id)}" required>
-
           <label>Rate per 1000 (₹)</label>
           <input name="rate" type="number" step="0.0001"
             min="0.0001" value="${Number(s.rate)}" required>
-
           <label>Minimum</label>
           <input name="min" type="number" min="100"
             max="10000000" value="${s.min}" required>
-
           <label>Maximum</label>
           <input name="max" type="number" min="100"
             max="10000000" value="${s.max}" required>
-
           <label>Description</label>
           <textarea name="description">${esc(s.description)}</textarea>
-
           <button type="submit">Save Changes</button>
           <a class="btn" href="/admin/services">Cancel</a>
         </form>
@@ -1021,7 +1350,6 @@ app.get("/admin/services/:id/edit", requireAdmin, async (req, res) => {
 app.post("/admin/services/:id/edit", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-
     const name = String(req.body.name || "").trim();
     const category = String(req.body.category || "").trim();
     const providerId = String(req.body.provider_id || "").trim();
@@ -1052,33 +1380,18 @@ app.post("/admin/services/:id/edit", requireAdmin, async (req, res) => {
           description=$7
       WHERE id=$8
       RETURNING id
-    `, [
-      providerId,
-      name,
-      category,
-      rate,
-      min,
-      max,
-      description,
-      id
-    ]);
+    `, [providerId, name, category, rate, min, max, description, id]);
 
     if (!result.rowCount) {
       return res.status(404).send("Service not found.");
     }
 
-    console.log("SERVICE UPDATED:", id);
     res.redirect("/admin/services");
-
   } catch (error) {
     console.error("Update service error:", error);
-
     if (error.code === "23505") {
-      return res.status(409).send(
-        "This Provider Service ID already belongs to another service."
-      );
+      return res.status(409).send("This Provider Service ID already belongs to another service.");
     }
-
     res.status(500).send("Could not update service.");
   }
 });
@@ -1112,35 +1425,19 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
     if (existing.rowCount) {
       await db(`
         UPDATE services
-        SET name=$1,
-            category=$2,
-            rate=$3,
-            min=$4,
-            max=$5,
-            description=$6,
-            active=TRUE
+        SET name=$1,category=$2,rate=$3,min=$4,max=$5,
+            description=$6,active=TRUE
         WHERE id=$7
-      `, [
-        name, category, rate, min, max,
-        description, existing.rows[0].id
-      ]);
-
-      console.log("EXISTING SERVICE UPDATED:", existing.rows[0].id);
+      `, [name, category, rate, min, max, description, existing.rows[0].id]);
     } else {
       await db(`
         INSERT INTO services
         (provider_id,name,category,rate,min,max,description,active)
         VALUES($1,$2,$3,$4,$5,$6,$7,TRUE)
-      `, [
-        providerId, name, category, rate,
-        min, max, description
-      ]);
-
-      console.log("NEW SERVICE ADDED:", providerId);
+      `, [providerId, name, category, rate, min, max, description]);
     }
 
     res.redirect("/admin/services");
-
   } catch (error) {
     console.error("Add/update service error:", error);
     res.status(500).send("Could not add or update service.");
@@ -1150,11 +1447,7 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
 // DISABLE ALL SERVICES
 app.post("/admin/services/disable-all", requireAdmin, async (req, res) => {
   try {
-    const result = await db(`
-      UPDATE services SET active=FALSE WHERE active=TRUE
-    `);
-
-    console.log("All services disabled:", result.rowCount);
+    await db("UPDATE services SET active=FALSE WHERE active=TRUE");
     res.redirect("/admin/services");
   } catch (error) {
     console.error("Disable all services error:", error);
@@ -1165,11 +1458,7 @@ app.post("/admin/services/disable-all", requireAdmin, async (req, res) => {
 // ENABLE ALL SERVICES
 app.post("/admin/services/enable-all", requireAdmin, async (req, res) => {
   try {
-    const result = await db(`
-      UPDATE services SET active=TRUE WHERE active=FALSE
-    `);
-
-    console.log("All services enabled:", result.rowCount);
+    await db("UPDATE services SET active=TRUE WHERE active=FALSE");
     res.redirect("/admin/services");
   } catch (error) {
     console.error("Enable all services error:", error);
@@ -1355,51 +1644,6 @@ app.post("/admin/orders/:id/status", requireAdmin, async (req, res) => {
   }
 });
 
-// PROVIDER ORDER STATUS SYNC
-async function syncProviderStatuses() {
-  try {
-    const result = await db(`
-      SELECT id,provider_order_id
-      FROM orders
-      WHERE provider_order_id IS NOT NULL
-      AND status NOT IN ('Completed','Canceled','Failed')
-      ORDER BY id DESC LIMIT 30
-    `);
-
-    for (const order of result.rows) {
-      try {
-        const data = await providerOrderStatus(order.provider_order_id);
-
-        const raw = String(
-          data?.status ?? data?.data?.status ?? ""
-        ).trim().toLowerCase();
-
-        const mapping = {
-          pending: "Pending",
-          processing: "Processing",
-          "in progress": "In progress",
-          completed: "Completed",
-          partial: "Partial",
-          canceled: "Canceled",
-          cancelled: "Canceled",
-          failed: "Failed"
-        };
-
-        if (mapping[raw]) {
-          await db(
-            "UPDATE orders SET status=$1 WHERE id=$2",
-            [mapping[raw], order.id]
-          );
-        }
-      } catch (error) {
-        console.error("Provider status error:", error.message);
-      }
-    }
-  } catch (error) {
-    console.error("Status sync error:", error.message);
-  }
-}
-
 // START SERVER
 async function start() {
   try {
@@ -1414,12 +1658,7 @@ async function start() {
       () => console.log("ROYAL PANEL running.")
     );
 
-    const timer = setInterval(syncProviderStatuses, 60000);
-    timer.unref();
-
     process.on("SIGTERM", async () => {
-      clearInterval(timer);
-
       server.close(async () => {
         await pool.end();
         process.exit(0);
