@@ -164,7 +164,7 @@ function calculateProviderRate(providerRate) {
 }
 
 function categoryFromName(name, category) {
-  const text = `${name} ${category}`.toLowerCase();
+  const text = `${name || ""} ${category || ""}`.toLowerCase();
   for (const word of ["instagram", "facebook", "youtube", "tiktok", "whatsapp", "twitter", "telegram"]) {
     if (text.includes(word)) return word[0].toUpperCase() + word.slice(1);
   }
@@ -176,7 +176,6 @@ async function submitProviderOrder(service, link, quantity) {
     throw new Error("यह सर्विस SocialAdd Provider से कनेक्ट नहीं है।");
   }
 
-  // फिलहाल SocialAdd के Default type ऑर्डर सपोर्ट किए गए हैं।
   if (service.provider_type && service.provider_type.toLowerCase() !== "default") {
     throw new Error("इस सर्विस का type " + service.provider_type +
       " है। इस type के लिए अलग input fields चाहिए; इसे अभी ऑर्डर नहीं किया जा सकता।");
@@ -194,10 +193,7 @@ async function submitProviderOrder(service, link, quantity) {
 }
 
 async function syncProviderOrder(orderId) {
-  const result = await db(
-    "SELECT * FROM orders WHERE id=$1",
-    [orderId]
-  );
+  const result = await db("SELECT * FROM orders WHERE id=$1", [orderId]);
   if (!result.rowCount) throw new Error("Order not found.");
 
   const order = result.rows[0];
@@ -302,7 +298,6 @@ async function setupDatabase() {
     ADD COLUMN IF NOT EXISTS service_name TEXT
   `);
 
-  // पुराने ऑर्डर के नाम सुरक्षित रखें।
   await db(`
     UPDATE orders o SET service_name=s.name
     FROM services s
@@ -500,17 +495,27 @@ app.get("/services", requireLogin, async (req, res) => {
   }
 });
 
-// NEW ORDER PAGE
+// NEW ORDER PAGE - SEARCH BY SERVICE NAME OR PROVIDER ID
 app.get("/new-order", requireLogin, async (req, res) => {
   try {
     const search = String(req.query.search || "").trim().slice(0, 100);
+
     const result = search
       ? await db(`
-          SELECT * FROM services WHERE active=TRUE AND
-          (name ILIKE $1 OR category ILIKE $1 OR COALESCE(description,'') ILIKE $1)
+          SELECT * FROM services
+          WHERE active=TRUE AND (
+            name ILIKE $1
+            OR category ILIKE $1
+            OR COALESCE(description,'') ILIKE $1
+            OR COALESCE(provider_id,'') ILIKE $1
+          )
           ORDER BY category,name LIMIT 500
         `, [`%${search}%`])
-      : await db("SELECT * FROM services WHERE active=TRUE ORDER BY category,name LIMIT 500");
+      : await db(`
+          SELECT * FROM services
+          WHERE active=TRUE
+          ORDER BY category,name LIMIT 500
+        `);
 
     const groups = {};
     for (const s of result.rows) {
@@ -524,33 +529,46 @@ app.get("/new-order", requireLogin, async (req, res) => {
         ${services.map(s => `
           <option value="${s.id}" data-rate="${Number(s.rate)}"
             data-min="${Number(s.min)}" data-max="${Number(s.max)}">
-            ${esc(s.name)} | ₹${Number(s.rate).toFixed(2)}/1K
+            ${esc(s.name)} | Provider ID: ${esc(s.provider_id || "-")} | ₹${Number(s.rate).toFixed(2)}/1K
           </option>
         `).join("")}
       </optgroup>
     `).join("");
 
     res.send(page("New Order", `
-      <div class="card"><form method="GET">
-        <label>Search Services</label>
-        <input name="search" value="${esc(search)}" placeholder="Search service">
-        <button>Search</button>
-      </form></div>
-      <div class="card"><form method="POST">
-        <label>Select Service</label>
-        <select name="service_id" id="serviceSelect" required>
-          <option value="">Choose service</option>${options}
-        </select>
-        <label>Post / Profile Link</label>
-        <input name="link" type="url" placeholder="https://" required>
-        <label>Quantity</label>
-        <input name="quantity" id="quantityInput" type="number" min="1" max="10000000" required>
-        <div style="background:#f3f4f6;color:#111;padding:15px;border-radius:10px;margin:15px 0">
-          Total Price <div id="totalPrice" style="font-size:26px;font-weight:bold">₹0.00</div>
-          <small id="priceDetails">Select service and quantity</small>
-        </div>
-        <button>Place Order</button>
-      </form></div>
+      <div class="card">
+        <form method="GET">
+          <label>Search Service Name or Provider Service ID</label>
+          <input name="search" value="${esc(search)}"
+            placeholder="Enter service name or Provider ID">
+          <button>Search</button>
+          <a class="btn" href="/new-order">Show All</a>
+        </form>
+      </div>
+
+      <div class="card">
+        <form method="POST">
+          <label>Select Service</label>
+          <select name="service_id" id="serviceSelect" required>
+            <option value="">Choose service</option>${options}
+          </select>
+
+          <label>Post / Profile Link</label>
+          <input name="link" type="url" placeholder="https://" required>
+
+          <label>Quantity</label>
+          <input name="quantity" id="quantityInput" type="number"
+            min="1" max="10000000" required>
+
+          <div style="background:#f3f4f6;color:#111;padding:15px;border-radius:10px;margin:15px 0">
+            Total Price
+            <div id="totalPrice" style="font-size:26px;font-weight:bold">₹0.00</div>
+            <small id="priceDetails">Select service and quantity</small>
+          </div>
+          <button>Place Order</button>
+        </form>
+      </div>
+
       <script>
       (() => {
         const s=document.getElementById("serviceSelect");
@@ -611,7 +629,6 @@ app.post("/new-order", requireLogin, async (req, res) => {
     if (!Number.isFinite(charge) || charge <= 0) throw new Error("Invalid service price.");
     if (Number(user.balance) < charge) throw new Error("Insufficient wallet balance. Add funds first.");
 
-    // Provider order भेजने से पहले wallet transaction lock रखा जाता है।
     const providerOrderId = await submitProviderOrder(service, link, quantity);
 
     await client.query("UPDATE users SET balance=balance-$1 WHERE id=$2", [charge, user.id]);
@@ -652,7 +669,7 @@ app.get("/orders", requireLogin, async (req, res) => {
 
     res.send(page("My Orders", `
       <div class="card tablewrap"><table>
-      <tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Provider ID</th></tr>
+      <tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Provider Order ID</th></tr>
       ${rows}</table></div>
     `, req.session.user));
   } catch (e) {
@@ -782,7 +799,7 @@ app.post("/api-keys/:id/delete", requireLogin, async (req, res) => {
   res.redirect("/api-keys");
 });
 
-// ROYAL PANEL RESELLER API - यह तुम्हारा अपना API है
+// ROYAL PANEL RESELLER API
 app.post("/api/v2", resellerApiLimit, async (req, res) => {
   const action = String(req.body.action || "").toLowerCase();
   const key = String(req.body.key || "");
@@ -928,10 +945,10 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
           <button>Test API Connection</button>
         </form>
         <form method="POST" action="/admin/provider/import"
-          onsubmit="return confirm('SocialAdd services import करें? पुराने provider की services inactive हो जाएँगी।')">
-          <button class="success">Import / Update SocialAdd Services</button>
+          onsubmit="return confirm('सिर्फ Instagram services import होंगी। बाकी services inactive रहेंगी।')">
+          <button class="success">Import / Update Instagram Services</button>
         </form>
-        <p><small>Import करने पर SocialAdd services अपडेट होंगी। Admin Services में जाकर अपनी बिक्री की कीमत एडिट कर सकते हो।</small></p>
+        <p><small>Import करने पर सिर्फ Instagram services अपडेट होंगी। Admin Services में जाकर बिक्री की कीमत एडिट कर सकते हो।</small></p>
       </div>
       <div class="card">
         <a class="btn" href="/admin/services">Manage Service Prices</a>
@@ -961,10 +978,11 @@ app.post("/admin/provider/test", requireAdmin, async (req, res) => {
   }
 });
 
-// IMPORT / UPDATE SERVICES FROM SOCIALADD
+// IMPORT ONLY INSTAGRAM SERVICES FROM SOCIALADD
 app.post("/admin/provider/import", requireAdmin, async (req, res) => {
   const client = await pool.connect();
   let started = false;
+
   try {
     if (!PROVIDER_KEY) throw new Error("Render में SOCIALADD_API_KEY सेट करो।");
     if (!Number.isFinite(USD_TO_INR) || USD_TO_INR <= 0) {
@@ -977,25 +995,35 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
     await client.query("BEGIN");
     started = true;
 
-    // पुराने provider/manual catalogue को बंद करें; records delete नहीं होंगे।
-    await client.query(`
-      UPDATE services SET active=FALSE
-      WHERE COALESCE(provider_source,'manual') <> 'socialadd'
-    `);
+    // Import शुरू होने पर सभी services inactive होंगी।
+    // नीचे सिर्फ Instagram services active की जाएँगी।
+    await client.query("UPDATE services SET active=FALSE");
 
     let imported = 0;
+    let skipped = 0;
+
     for (const s of services) {
       const providerId = String(s.service || "").trim();
       const name = String(s.name || "").trim();
       const type = String(s.type || "Default").trim();
       const category = categoryFromName(name, s.category);
+
+      // Instagram के अलावा बाकी platforms import नहीं होंगे।
+      if (category.toLowerCase() !== "instagram") {
+        skipped++;
+        continue;
+      }
+
       const providerRate = Number(s.rate);
       const min = Number(s.min);
       const max = Number(s.max);
 
       if (!providerId || !name || !Number.isFinite(providerRate) ||
           providerRate <= 0 || !Number.isInteger(min) || !Number.isInteger(max) ||
-          min < 1 || max < min) continue;
+          min < 1 || max < min) {
+        skipped++;
+        continue;
+      }
 
       const retailRate = calculateProviderRate(providerRate);
 
@@ -1016,23 +1044,28 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
           provider_rate=EXCLUDED.provider_rate,
           active=TRUE
       `, [
-        providerId, name, category,
+        providerId, name, "Instagram",
         `SocialAdd ${type} service`,
         retailRate, min, max, type, providerRate
       ]);
+
       imported++;
     }
 
     await client.query("COMMIT");
     started = false;
 
-    res.send(page("Services Imported", `
-      <div class="card"><h3>Import Complete</h3>
-      <p>Processed services: ${imported}</p>
-      <p>SocialAdd services अब Manage Services में दिखाई देंगी।</p>
-      <a class="btn" href="/admin/services">Edit Service Prices</a>
-      <a class="btn" href="/admin/provider">Provider Page</a></div>
+    res.send(page("Instagram Services Imported", `
+      <div class="card">
+        <h3>Import Complete</h3>
+        <p>Instagram services imported: ${imported}</p>
+        <p>Other services skipped: ${skipped}</p>
+        <p>अब सिर्फ Instagram services active रहेंगी।</p>
+        <a class="btn" href="/admin/services">Manage Service Prices</a>
+        <a class="btn" href="/admin/provider">Provider Page</a>
+      </div>
     `, req.session.user));
+
   } catch (e) {
     if (started) await client.query("ROLLBACK");
     console.error("SocialAdd import error:", e);
@@ -1086,30 +1119,46 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
     const search = String(req.query.search || "").trim().slice(0, 100);
     const result = search
       ? await db(`
-          SELECT * FROM services WHERE name ILIKE $1 OR category ILIKE $1
-          OR COALESCE(provider_id,'') ILIKE $1
+          SELECT * FROM services
+          WHERE name ILIKE $1
+             OR category ILIKE $1
+             OR COALESCE(provider_id,'') ILIKE $1
           ORDER BY id DESC LIMIT 300
         `, [`%${search}%`])
       : await db("SELECT * FROM services ORDER BY id DESC LIMIT 300");
 
     const rows = result.rows.map(s => `
-      <tr><td>${s.id}</td><td>${esc(s.name)}</td><td>${esc(s.category)}</td>
-      <td>${esc(s.provider_id || "-")}</td>
-      <td>${esc(s.provider_source || "manual")}</td>
-      <td>₹${Number(s.rate).toFixed(2)}</td><td>${s.min}</td><td>${s.max}</td>
-      <td>${s.active ? "Active" : "Off"}</td><td>
-      <a class="btn" href="/admin/services/${s.id}/edit">Edit</a>
-      <form method="POST" action="/admin/services/${s.id}/toggle">
-      <button>${s.active ? "Disable" : "Enable"}</button></form></td></tr>
+      <tr>
+        <td>${s.id}</td>
+        <td>${esc(s.name)}</td>
+        <td>${esc(s.category)}</td>
+        <td><strong>${esc(s.provider_id || "-")}</strong></td>
+        <td>${esc(s.provider_source || "manual")}</td>
+        <td>₹${Number(s.rate).toFixed(2)}</td>
+        <td>${s.min}</td>
+        <td>${s.max}</td>
+        <td>${s.active ? "Active" : "Off"}</td>
+        <td>
+          <a class="btn" href="/admin/services/${s.id}/edit">Edit</a>
+          <form method="POST" action="/admin/services/${s.id}/toggle">
+            <button>${s.active ? "Disable" : "Enable"}</button>
+          </form>
+        </td>
+      </tr>
     `).join("");
 
     res.send(page("Manage Services", `
       <div class="card">
         <a class="btn" href="/admin/provider">SocialAdd Import</a>
-        <form method="GET"><label>Search Services</label>
-        <input name="search" value="${esc(search)}" placeholder="Search Provider ID or name">
-        <button>Search</button></form>
+        <form method="GET">
+          <label>Search Service Name or Provider Service ID</label>
+          <input name="search" value="${esc(search)}"
+            placeholder="Search Provider ID or service name">
+          <button>Search</button>
+          <a class="btn" href="/admin/services">Show All</a>
+        </form>
       </div>
+
       <div class="card">
         <h3>Bulk Service Control</h3>
         <form method="POST" action="/admin/services/disable-all"
@@ -1121,10 +1170,12 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <button class="success">Enable All Services</button>
         </form>
       </div>
-      <div class="card"><h3>Add Manual Service</h3>
+
+      <div class="card">
+        <h3>Add Manual Service</h3>
         <form method="POST" action="/admin/services">
           <label>Service Name</label><input name="name" required>
-          <label>Category</label><input name="category" value="Other" required>
+          <label>Category</label><input name="category" value="Instagram" required>
           <label>Provider Service ID</label><input name="provider_id" required>
           <label>Rate per 1000 (₹)</label><input name="rate" type="number" step="0.0001" min="0.0001" required>
           <label>Minimum</label><input name="min" type="number" value="100" min="1" required>
@@ -1133,10 +1184,18 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <button>Add / Update Service</button>
         </form>
       </div>
-      <div class="card tablewrap"><table>
-      <tr><th>ID</th><th>Name</th><th>Category</th><th>Provider ID</th>
-      <th>Provider</th><th>Rate</th><th>Min</th><th>Max</th><th>Status</th><th>Action</th></tr>
-      ${rows}</table></div>
+
+      <div class="card tablewrap">
+        <h3>Services and Provider IDs</h3>
+        <table>
+          <tr>
+            <th>Database ID</th><th>Service Name</th><th>Category</th>
+            <th>Provider Service ID</th><th>Provider</th><th>Rate</th>
+            <th>Min</th><th>Max</th><th>Status</th><th>Action</th>
+          </tr>
+          ${rows}
+        </table>
+      </div>
     `, req.session.user));
   } catch (e) {
     console.error(e);
@@ -1212,7 +1271,7 @@ app.post("/admin/services/:id/edit", requireAdmin, async (req, res) => {
 app.post("/admin/services", requireAdmin, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
-    const category = String(req.body.category || "Other").trim();
+    const category = String(req.body.category || "Instagram").trim();
     const providerId = String(req.body.provider_id || "").trim();
     const rate = Number(req.body.rate);
     const min = Number(req.body.min);
@@ -1330,7 +1389,7 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
     `).join("");
 
     res.send(page("All Orders", `<div class="card tablewrap"><table>
-      <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider ID</th><th>Update</th></tr>
+      <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider Order ID</th><th>Update</th></tr>
       ${rows}</table></div>`, req.session.user));
   } catch (e) {
     console.error(e);
