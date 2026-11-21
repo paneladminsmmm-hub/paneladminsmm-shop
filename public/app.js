@@ -1,18 +1,11 @@
-// Small client-side helpers. All order charges are recalculated on the server.
-document.addEventListener('DOMContentLoaded', () => {
-  const service = document.querySelector('#service');
-  const quantity = document.querySelector('input[name="quantity"]');
-  const estimate = document.querySelector('#charge-estimate');
-  const update = () => {
-    if (!service || !quantity || !estimate) return;
-    const option = service.options[service.selectedIndex];
-    const rate = Number(option?.dataset.rate || 0);
-    const qty = Number(quantity.value || 0);
-    estimate.textContent = `Estimated charge: ₹${(rate * qty / 1000).toFixed(2)}`;
-    if (option?.dataset.min) quantity.min = option.dataset.min;
-    if (option?.dataset.max) quantity.max = option.dataset.max;
-  };
-  service?.addEventListener('change', update);
-  quantity?.addEventListener('input', update);
-  update();
-});
+const pages=[...document.querySelectorAll('.page')],nav=[...document.querySelectorAll('[data-page]')],sidebar=document.getElementById('sidebar');
+function show(id){pages.forEach(p=>p.classList.toggle('active',p.id==='page-'+id));nav.forEach(n=>n.classList.toggle('active',n.dataset.page===id));sidebar.classList.remove('open');window.scrollTo({top:0,behavior:'smooth'});}
+nav.forEach(el=>el.addEventListener('click',e=>{e.preventDefault();show(el.dataset.page)}));
+document.getElementById('hamb').addEventListener('click',()=>sidebar.classList.toggle('open'));
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>el.style.display='none',3000);}
+['loginBtn','googleBtn','googleBtn2','registerBtn','forgotBtn','placeOrder','placeOrder2','payBtn','bulkBtn','ticketBtn'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',()=>toast('Frontend preview only. Connect a secure backend to activate this feature.'));});
+document.querySelectorAll('.status-list button').forEach(btn=>btn.addEventListener('click',()=>{btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('selected'));btn.classList.add('selected');}));
+const category=document.getElementById('category');if(category)category.addEventListener('change',()=>{const names={Instagram:['Instagram Followers - Quality','Instagram Likes','Instagram Reel Views','Instagram Comments'],YouTube:['YouTube Views','YouTube Subscribers','YouTube Likes'],Facebook:['Facebook Page Likes','Facebook Followers','Facebook Post Likes'],Telegram:['Telegram Members','Telegram Views'],TikTok:['TikTok Followers','TikTok Likes','TikTok Views'],'Twitter / X':['X Followers','X Likes'],'WhatsApp':['WhatsApp Channel Followers']};const service=document.getElementById('service');if(service)service.innerHTML=(names[category.value]||['Choose service']).map(x=>`<option>${x}</option>`).join('');});
+const qty=document.getElementById('quantity');if(qty)qty.addEventListener('input',()=>{const charge=document.getElementById('charge');if(charge)charge.value='₹'+((Number(qty.value)||0)*.05).toFixed(2)+' (demo)';});
+const search=document.getElementById('serviceSearch');if(search)search.addEventListener('input',()=>{const q=search.value.toLowerCase();document.getElementById('service').querySelectorAll('option').forEach(o=>o.hidden=!o.textContent.toLowerCase().includes(q));});
+document.querySelectorAll('.quick-grid button:not(.add-icon)').forEach((b,i)=>b.addEventListener('click',()=>{if(i===0)show('order');else toast('Choose a category and service after provider setup.');}));
