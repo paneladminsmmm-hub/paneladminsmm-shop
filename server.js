@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -886,10 +885,17 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
 
       <div class="card">
         <h3>Bulk Service Control</h3>
-        <p>एक क्लिक में सभी Services बंद करें।</p>
+        <p>एक क्लिक में सभी Services बंद या चालू करें।</p>
+
         <form method="POST" action="/admin/services/disable-all"
           onsubmit="return confirm('क्या आप सभी Services Disable करना चाहते हैं?')">
           <button type="submit" class="danger">Disable All Services</button>
+        </form>
+
+        <form method="POST" action="/admin/services/enable-all"
+          onsubmit="return confirm('क्या आप सभी Services Enable करना चाहते हैं?')"
+          style="margin-top:10px">
+          <button type="submit" class="success">Enable All Services</button>
         </form>
       </div>
 
@@ -1153,6 +1159,21 @@ app.post("/admin/services/disable-all", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Disable all services error:", error);
     res.status(500).send("Could not disable services.");
+  }
+});
+
+// ENABLE ALL SERVICES
+app.post("/admin/services/enable-all", requireAdmin, async (req, res) => {
+  try {
+    const result = await db(`
+      UPDATE services SET active=TRUE WHERE active=FALSE
+    `);
+
+    console.log("All services enabled:", result.rowCount);
+    res.redirect("/admin/services");
+  } catch (error) {
+    console.error("Enable all services error:", error);
+    res.status(500).send("Could not enable services.");
   }
 });
 
