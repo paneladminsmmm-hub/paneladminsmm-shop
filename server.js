@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -18,13 +17,14 @@ app.use("/public", express.static("public"));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("localhost")
-    ? false : { rejectUnauthorized: false }
+  ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false }
 });
 const db = (sql, params = []) => pool.query(sql, params);
 
 const PROVIDER_URL = process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
+const WHATSAPP_NUMBER = "918140989426";
+const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
 
 app.use(session({
   name: "royalpanel.sid",
@@ -71,6 +71,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// COMMON PAGE DESIGN - WHATSAPP FLOATING BUTTON HAR PAGE PAR
 function page(title, content, user = null) {
   const nav = user ? `
     <nav>
@@ -108,13 +109,46 @@ table{width:100%;border-collapse:collapse;min-width:750px}
 th,td{padding:10px;border-bottom:1px solid #384154;text-align:left;font-size:13px}
 .tablewrap{overflow-x:auto}
 small{color:#aeb8c9}
-.danger{background:#b42332}.success{background:#16834a}
+.danger{background:#b42332}
+.success{background:#16834a}
+
+/* FLOATING WHATSAPP BUTTON */
+.whatsapp-float{
+  position:fixed;
+  width:60px;
+  height:60px;
+  bottom:20px;
+  right:20px;
+  background:#25D366;
+  color:#fff;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:29px;
+  font-weight:bold;
+  text-decoration:none;
+  z-index:99999;
+  box-shadow:0 4px 12px rgba(0,0,0,.4);
+  border:2px solid white;
+}
+.whatsapp-float:hover{background:#1ebe5d;color:white}
 </style>
 </head>
 <body>
 <header><h2>ROYAL PANEL</h2><small>Panel Admin SMM.shop</small></header>
 ${nav}
 <main><h2>${esc(title)}</h2>${content}</main>
+
+<!-- WHATSAPP FLOATING BUTTON ON EVERY PAGE -->
+<a class="whatsapp-float"
+   href="${WHATSAPP_LINK}"
+   target="_blank"
+   rel="noopener noreferrer"
+   aria-label="WhatsApp Support">
+   WA
+</a>
+
 </body>
 </html>`;
 }
@@ -136,11 +170,8 @@ async function providerRequest(params) {
   });
 
   const data = await response.json().catch(() => null);
-
   if (!response.ok) throw new Error("SocialAdd API HTTP error: " + response.status);
-  if (!data || data.error) {
-    throw new Error(data?.error || "SocialAdd API से गलत response मिला।");
-  }
+  if (!data || data.error) throw new Error(data?.error || "SocialAdd API से गलत response मिला।");
   return data;
 }
 
@@ -155,14 +186,11 @@ function providerStatus(status) {
   return status || "Processing";
 }
 
-// SocialAdd का INR rate सीधे सेव होगा। कोई USD/INR conversion नहीं।
 function calculateProviderRate(providerRate) {
   const rate = Number(providerRate);
-
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new Error("SocialAdd से Provider Rate सही नहीं मिला।");
   }
-
   return rate;
 }
 
@@ -178,19 +206,16 @@ async function submitProviderOrder(service, link, quantity) {
   if (service.provider_source !== "socialadd") {
     throw new Error("यह सर्विस SocialAdd Provider से कनेक्ट नहीं है।");
   }
-
   if (service.provider_type && service.provider_type.toLowerCase() !== "default") {
     throw new Error("इस सर्विस का type " + service.provider_type +
       " है। इस type के लिए अलग input fields चाहिए; इसे अभी ऑर्डर नहीं किया जा सकता।");
   }
-
   const result = await providerRequest({
     action: "add",
     service: service.provider_id,
     link,
     quantity
   });
-
   if (!result.order) throw new Error("Provider ने Order ID नहीं दिया।");
   return String(result.order);
 }
@@ -198,15 +223,9 @@ async function submitProviderOrder(service, link, quantity) {
 async function syncProviderOrder(orderId) {
   const result = await db("SELECT * FROM orders WHERE id=$1", [orderId]);
   if (!result.rowCount) throw new Error("Order not found.");
-
   const order = result.rows[0];
   if (!order.provider_order_id) throw new Error("इस ऑर्डर का Provider Order ID नहीं है।");
-
-  const data = await providerRequest({
-    action: "status",
-    order: order.provider_order_id
-  });
-
+  const data = await providerRequest({ action: "status", order: order.provider_order_id });
   const status = providerStatus(data.status);
   await db("UPDATE orders SET status=$1 WHERE id=$2", [status, orderId]);
   return { ...data, status };
@@ -304,8 +323,7 @@ async function setupDatabase() {
   await db(`
     UPDATE orders o SET service_name=s.name
     FROM services s
-    WHERE o.service_id=s.id AND
-      (o.service_name IS NULL OR o.service_name='')
+    WHERE o.service_id=s.id AND (o.service_name IS NULL OR o.service_name='')
   `);
 
   await db(`
@@ -356,13 +374,11 @@ async function setupDatabase() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
       throw new Error("ADMIN_EMAIL is invalid.");
     }
-
     const existing = await db(
       `SELECT id FROM users WHERE LOWER(email)=LOWER($1) OR username=$2 LIMIT 1`,
       [adminEmail, adminUsername]
     );
     const hash = await bcrypt.hash(adminPassword, 12);
-
     if (existing.rowCount) {
       await db(`
         UPDATE users SET email=$1,username=$2,password_hash=$3,is_admin=TRUE
@@ -399,7 +415,6 @@ app.post("/register", authLimit, async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "");
-
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).send("Valid email required.");
     if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) return res.status(400).send("Invalid username.");
     if (password.length < 6) return res.status(400).send("Password must be at least 6 characters.");
@@ -438,12 +453,10 @@ app.post("/login", authLimit, async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const result = await db("SELECT * FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1", [email]);
     if (!result.rowCount) return res.status(401).send("Email or password incorrect.");
-
     const user = result.rows[0];
     if (!user.password_hash || !await bcrypt.compare(String(req.body.password || ""), user.password_hash)) {
       return res.status(401).send("Email or password incorrect.");
     }
-
     req.session.regenerate(err => {
       if (err) return res.status(500).send("Session error.");
       req.session.user = {
@@ -498,17 +511,15 @@ app.get("/services", requireLogin, async (req, res) => {
   }
 });
 
-// NEW ORDER PAGE - SEARCH BY SERVICE NAME OR PROVIDER ID
+// NEW ORDER PAGE
 app.get("/new-order", requireLogin, async (req, res) => {
   try {
     const search = String(req.query.search || "").trim().slice(0, 100);
-
     const result = search
       ? await db(`
           SELECT * FROM services
           WHERE active=TRUE AND (
-            name ILIKE $1
-            OR category ILIKE $1
+            name ILIKE $1 OR category ILIKE $1
             OR COALESCE(description,'') ILIKE $1
             OR COALESCE(provider_id,'') ILIKE $1
           )
@@ -516,8 +527,7 @@ app.get("/new-order", requireLogin, async (req, res) => {
         `, [`%${search}%`])
       : await db(`
           SELECT * FROM services
-          WHERE active=TRUE
-          ORDER BY category,name LIMIT 500
+          WHERE active=TRUE ORDER BY category,name LIMIT 500
         `);
 
     const groups = {};
@@ -542,27 +552,21 @@ app.get("/new-order", requireLogin, async (req, res) => {
       <div class="card">
         <form method="GET">
           <label>Search Service Name or Provider Service ID</label>
-          <input name="search" value="${esc(search)}"
-            placeholder="Enter service name or Provider ID">
+          <input name="search" value="${esc(search)}" placeholder="Enter service name or Provider ID">
           <button>Search</button>
           <a class="btn" href="/new-order">Show All</a>
         </form>
       </div>
-
       <div class="card">
         <form method="POST">
           <label>Select Service</label>
           <select name="service_id" id="serviceSelect" required>
             <option value="">Choose service</option>${options}
           </select>
-
           <label>Post / Profile Link</label>
           <input name="link" type="url" placeholder="https://" required>
-
           <label>Quantity</label>
-          <input name="quantity" id="quantityInput" type="number"
-            min="1" max="10000000" required>
-
+          <input name="quantity" id="quantityInput" type="number" min="1" max="10000000" required>
           <div style="background:#f3f4f6;color:#111;padding:15px;border-radius:10px;margin:15px 0">
             Total Price
             <div id="totalPrice" style="font-size:26px;font-weight:bold">₹0.00</div>
@@ -571,7 +575,6 @@ app.get("/new-order", requireLogin, async (req, res) => {
           <button>Place Order</button>
         </form>
       </div>
-
       <script>
       (() => {
         const s=document.getElementById("serviceSelect");
@@ -603,7 +606,7 @@ app.get("/new-order", requireLogin, async (req, res) => {
   }
 });
 
-// PLACE CUSTOMER ORDER - SUBMIT TO SOCIALADD
+// PLACE CUSTOMER ORDER
 app.post("/new-order", requireLogin, async (req, res) => {
   const client = await pool.connect();
   let started = false;
@@ -611,36 +614,28 @@ app.post("/new-order", requireLogin, async (req, res) => {
     const serviceId = Number(req.body.service_id);
     const quantity = Number(req.body.quantity);
     const link = String(req.body.link || "").trim();
-
-    if (!Number.isInteger(serviceId) || !Number.isInteger(quantity) ||
-        !/^https?:\/\//i.test(link)) throw new Error("Invalid order details.");
-
+    if (!Number.isInteger(serviceId) || !Number.isInteger(quantity) || !/^https?:\/\//i.test(link)) {
+      throw new Error("Invalid order details.");
+    }
     await client.query("BEGIN");
     started = true;
-
     const ur = await client.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [req.session.user.id]);
     const sr = await client.query("SELECT * FROM services WHERE id=$1 AND active=TRUE", [serviceId]);
-
     if (!ur.rowCount || !sr.rowCount) throw new Error("User or service not found.");
-
     const user = ur.rows[0], service = sr.rows[0];
     if (quantity < Number(service.min) || quantity > Number(service.max)) {
       throw new Error(`Quantity must be between ${service.min} and ${service.max}.`);
     }
-
     const charge = Number(service.rate) * quantity / 1000;
     if (!Number.isFinite(charge) || charge <= 0) throw new Error("Invalid service price.");
     if (Number(user.balance) < charge) throw new Error("Insufficient wallet balance. Add funds first.");
-
     const providerOrderId = await submitProviderOrder(service, link, quantity);
-
     await client.query("UPDATE users SET balance=balance-$1 WHERE id=$2", [charge, user.id]);
     await client.query(`
       INSERT INTO orders
       (user_id,service_id,service_name,provider_order_id,link,quantity,charge,status)
       VALUES($1,$2,$3,$4,$5,$6,$7,'Pending')
     `, [user.id, service.id, service.name, providerOrderId, link, quantity, charge]);
-
     await client.query("COMMIT");
     started = false;
     res.redirect("/orders");
@@ -663,13 +658,11 @@ app.get("/orders", requireLogin, async (req, res) => {
       FROM orders o LEFT JOIN services s ON s.id=o.service_id
       WHERE o.user_id=$1 ORDER BY o.id DESC LIMIT 200
     `, [req.session.user.id]);
-
     const rows = result.rows.map(o => `
       <tr><td>${o.id}</td><td>${esc(o.display_name)}</td>
       <td>${esc(o.quantity)}</td><td>₹${Number(o.charge || 0).toFixed(2)}</td>
       <td>${esc(o.status)}</td><td>${esc(o.provider_order_id || "-")}</td></tr>
     `).join("");
-
     res.send(page("My Orders", `
       <div class="card tablewrap"><table>
       <tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th><th>Provider Order ID</th></tr>
@@ -718,13 +711,30 @@ app.post("/add-funds", requireLogin, async (req, res) => {
   }
 });
 
-// SUPPORT
+// SUPPORT - WHATSAPP CHAT + SUPPORT TICKET
 app.get("/support", requireLogin, (req, res) => {
   res.send(page("Support", `
-    <div class="card"><form method="POST">
-      <label>Message</label><textarea name="message" maxlength="2000" required></textarea>
-      <button>Send Message</button>
-    </form></div>
+    <div class="card">
+      <h3>ROYAL PANEL Customer Support</h3>
+      <p>Need help? Contact our support team on WhatsApp.</p>
+
+      <a class="btn"
+         style="background:#25D366;color:white;display:block;text-align:center;margin:15px 0"
+         href="${WHATSAPP_LINK}"
+         target="_blank"
+         rel="noopener noreferrer">
+         WhatsApp Chat - +91 8140989426
+      </a>
+
+      <hr style="border:0;border-top:1px solid #384154;margin:20px 0">
+
+      <h3>Submit Support Ticket</h3>
+      <form method="POST">
+        <label>Message</label>
+        <textarea name="message" maxlength="2000" required></textarea>
+        <button>Send Message</button>
+      </form>
+    </div>
   `, req.session.user));
 });
 
@@ -754,7 +764,6 @@ app.get("/api-keys", requireLogin, async (req, res) => {
       <form method="POST" action="/api-keys/${k.id}/delete" onsubmit="return confirm('Revoke this API key?')">
       <button class="danger">Revoke</button></form></td></tr>
     `).join("");
-
     res.send(page("My Reseller API", `
       <div class="card"><h3>Your API URL</h3>
       <input readonly value="${esc(process.env.APP_URL || "https://paneladminsmm-shop-1.onrender.com")}/api/v2">
@@ -807,7 +816,6 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
   const action = String(req.body.action || "").toLowerCase();
   const key = String(req.body.key || "");
   if (!key || !action) return res.json({ error: "Invalid API request" });
-
   const hash = crypto.createHash("sha256").update(key).digest("hex");
 
   try {
@@ -816,7 +824,6 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
       JOIN users u ON u.id=a.user_id
       WHERE a.key_hash=$1 AND a.active=TRUE LIMIT 1
     `, [hash]);
-
     if (!keyResult.rowCount) return res.json({ error: "Invalid or disabled API key" });
     const userId = keyResult.rows[0].user_id;
 
@@ -844,9 +851,7 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
         [orderId, userId]);
       if (!r.rowCount) return res.json({ error: "Order not found" });
       const o = r.rows[0];
-      return res.json({
-        charge: Number(o.charge).toFixed(2), status: o.status, quantity: o.quantity
-      });
+      return res.json({ charge: Number(o.charge).toFixed(2), status: o.status, quantity: o.quantity });
     }
 
     if (action === "add") {
@@ -865,7 +870,6 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
         const ur = await client.query("SELECT * FROM users WHERE id=$1 FOR UPDATE", [userId]);
         const sr = await client.query("SELECT * FROM services WHERE id=$1 AND active=TRUE", [serviceId]);
         if (!ur.rowCount || !sr.rowCount) throw new Error("User or service not found");
-
         const user = ur.rows[0], service = sr.rows[0];
         if (quantity < Number(service.min) || quantity > Number(service.max)) {
           throw new Error("Quantity outside service limits");
@@ -873,14 +877,12 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
         const charge = Number(service.rate) * quantity / 1000;
         if (!Number.isFinite(charge) || charge <= 0) throw new Error("Invalid service price");
         if (Number(user.balance) < charge) throw new Error("Insufficient balance");
-
         const providerOrderId = await submitProviderOrder(service, link, quantity);
         await client.query("UPDATE users SET balance=balance-$1 WHERE id=$2", [charge, userId]);
         const order = await client.query(`
           INSERT INTO orders(user_id,service_id,service_name,provider_order_id,link,quantity,charge,status)
           VALUES($1,$2,$3,$4,$5,$6,$7,'Pending') RETURNING id
         `, [userId, serviceId, service.name, providerOrderId, link, quantity, charge]);
-
         await client.query("COMMIT");
         started = false;
         return res.json({ order: order.rows[0].id });
@@ -891,7 +893,6 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
         client.release();
       }
     }
-
     return res.json({ error: "Invalid action" });
   } catch (e) {
     console.error("Reseller API error:", e);
@@ -935,7 +936,6 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
              COUNT(*) FILTER (WHERE provider_source='socialadd' AND active=TRUE) AS active
       FROM services
     `);
-
     res.send(page("SocialAdd Provider", `
       <div class="card">
         <h3>SocialAdd API Connection</h3>
@@ -944,9 +944,7 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
         <p>Provider Rate: SocialAdd API का INR rate सीधे import होगा।</p>
         <p>Imported SocialAdd services: ${counts.rows[0].imported}</p>
         <p>Active SocialAdd services: ${counts.rows[0].active}</p>
-        <form method="POST" action="/admin/provider/test">
-          <button>Test API Connection</button>
-        </form>
+        <form method="POST" action="/admin/provider/test"><button>Test API Connection</button></form>
         <form method="POST" action="/admin/provider/import"
           onsubmit="return confirm('सिर्फ Instagram services import होंगी। बाकी services inactive रहेंगी और Instagram की कीमतें SocialAdd Rate से अपडेट होंगी।')">
           <button class="success">Import / Update Instagram Services</button>
@@ -985,20 +983,13 @@ app.post("/admin/provider/test", requireAdmin, async (req, res) => {
 app.post("/admin/provider/import", requireAdmin, async (req, res) => {
   const client = await pool.connect();
   let started = false;
-
   try {
     if (!PROVIDER_KEY) throw new Error("Render में SOCIALADD_API_KEY सेट करो।");
-
     const services = await providerRequest({ action: "services" });
     if (!Array.isArray(services)) throw new Error("Provider services list सही नहीं है।");
-
     await client.query("BEGIN");
     started = true;
-
-    // Import शुरू होने पर सभी services inactive होंगी।
-    // नीचे सिर्फ Instagram services active की जाएँगी।
     await client.query("UPDATE services SET active=FALSE");
-
     let imported = 0;
     let skipped = 0;
 
@@ -1007,27 +998,20 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
       const name = String(s.name || "").trim();
       const type = String(s.type || "Default").trim();
       const category = categoryFromName(name, s.category);
-
-      // Instagram के अलावा बाकी platforms import नहीं होंगे।
       if (category.toLowerCase() !== "instagram") {
         skipped++;
         continue;
       }
-
       const providerRate = Number(s.rate);
       const min = Number(s.min);
       const max = Number(s.max);
-
       if (!providerId || !name || !Number.isFinite(providerRate) ||
           providerRate <= 0 || !Number.isInteger(min) || !Number.isInteger(max) ||
           min < 1 || max < min) {
         skipped++;
         continue;
       }
-
-      // SocialAdd की INR Provider Rate सीधे सेव होगी।
       const exactProviderRate = calculateProviderRate(providerRate);
-
       await client.query(`
         INSERT INTO services
         (provider_id,name,category,description,rate,min,max,active,
@@ -1050,13 +1034,10 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         `SocialAdd ${type} service`,
         exactProviderRate, min, max, type, exactProviderRate
       ]);
-
       imported++;
     }
-
     await client.query("COMMIT");
     started = false;
-
     res.send(page("Instagram Services Imported", `
       <div class="card">
         <h3>Import Complete</h3>
@@ -1069,7 +1050,6 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         <a class="btn" href="/admin/provider">Provider Page</a>
       </div>
     `, req.session.user));
-
   } catch (e) {
     if (started) await client.query("ROLLBACK");
     console.error("SocialAdd import error:", e);
@@ -1095,7 +1075,6 @@ app.get("/admin/api", requireAdmin, async (req, res) => {
       <td><form method="POST" action="/admin/api/${k.id}/toggle">
       <button>${k.active ? "Disable" : "Enable"}</button></form></td></tr>
     `).join("");
-
     res.send(page("API Management", `
       <div class="card"><h3>ROYAL PANEL Reseller API</h3>
       <input readonly value="${esc(process.env.APP_URL || "https://paneladminsmm-shop-1.onrender.com")}/api/v2">
@@ -1124,8 +1103,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
     const result = search
       ? await db(`
           SELECT * FROM services
-          WHERE name ILIKE $1
-             OR category ILIKE $1
+          WHERE name ILIKE $1 OR category ILIKE $1
              OR COALESCE(provider_id,'') ILIKE $1
           ORDER BY id DESC LIMIT 300
         `, [`%${search}%`])
@@ -1133,16 +1111,12 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
 
     const rows = result.rows.map(s => `
       <tr>
-        <td>${s.id}</td>
-        <td>${esc(s.name)}</td>
-        <td>${esc(s.category)}</td>
+        <td>${s.id}</td><td>${esc(s.name)}</td><td>${esc(s.category)}</td>
         <td><strong>${esc(s.provider_id || "-")}</strong></td>
         <td>${esc(s.provider_source || "manual")}</td>
         <td>${s.provider_rate === null ? "-" : Number(s.provider_rate).toFixed(4)}</td>
         <td>₹${Number(s.rate).toFixed(2)}</td>
-        <td>${s.min}</td>
-        <td>${s.max}</td>
-        <td>${s.active ? "Active" : "Off"}</td>
+        <td>${s.min}</td><td>${s.max}</td><td>${s.active ? "Active" : "Off"}</td>
         <td>
           <a class="btn" href="/admin/services/${s.id}/edit">Edit</a>
           <form method="POST" action="/admin/services/${s.id}/toggle">
@@ -1157,13 +1131,11 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
         <a class="btn" href="/admin/provider">SocialAdd Import</a>
         <form method="GET">
           <label>Search Service Name or Provider Service ID</label>
-          <input name="search" value="${esc(search)}"
-            placeholder="Search Provider ID or service name">
+          <input name="search" value="${esc(search)}" placeholder="Search Provider ID or service name">
           <button>Search</button>
           <a class="btn" href="/admin/services">Show All</a>
         </form>
       </div>
-
       <div class="card">
         <h3>Bulk Service Control</h3>
         <form method="POST" action="/admin/services/disable-all"
@@ -1175,7 +1147,6 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <button class="success">Enable All Services</button>
         </form>
       </div>
-
       <div class="card">
         <h3>Add Manual Service</h3>
         <form method="POST" action="/admin/services">
@@ -1189,16 +1160,14 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
           <button>Add / Update Service</button>
         </form>
       </div>
-
       <div class="card tablewrap">
         <h3>Services and Provider IDs</h3>
         <p><small>Provider Rate = SocialAdd API से आया हुआ INR rate। Selling Rate = ग्राहक को दिखाई जाने वाली कीमत (₹)।</small></p>
         <table>
           <tr>
             <th>Database ID</th><th>Service Name</th><th>Category</th>
-            <th>Provider Service ID</th><th>Provider</th>
-            <th>Provider Rate (₹)</th><th>Selling Rate (₹)</th>
-            <th>Min</th><th>Max</th><th>Status</th><th>Action</th>
+            <th>Provider Service ID</th><th>Provider</th><th>Provider Rate (₹)</th>
+            <th>Selling Rate (₹)</th><th>Min</th><th>Max</th><th>Status</th><th>Action</th>
           </tr>
           ${rows}
         </table>
@@ -1217,7 +1186,6 @@ app.get("/admin/services/:id/edit", requireAdmin, async (req, res) => {
     const result = await db("SELECT * FROM services WHERE id=$1", [id]);
     if (!result.rowCount) return res.status(404).send("Service not found.");
     const s = result.rows[0];
-
     res.send(page("Edit Service", `
       <div class="card"><h3>Update Service</h3>
       <p>Database Service ID: ${s.id}</p>
@@ -1254,18 +1222,15 @@ app.post("/admin/services/:id/edit", requireAdmin, async (req, res) => {
     const min = Number(req.body.min);
     const max = Number(req.body.max);
     const description = String(req.body.description || "").trim();
-
     if (!Number.isInteger(id) || id < 1 || !name || !category || !providerId ||
         !Number.isFinite(rate) || rate <= 0 || !Number.isInteger(min) || min < 1 ||
         !Number.isInteger(max) || max < min || max > 10000000) {
       return res.status(400).send("Invalid service details.");
     }
-
     const result = await db(`
       UPDATE services SET provider_id=$1,name=$2,category=$3,rate=$4,
       min=$5,max=$6,description=$7 WHERE id=$8 RETURNING id
     `, [providerId, name, category, rate, min, max, description, id]);
-
     if (!result.rowCount) return res.status(404).send("Service not found.");
     res.redirect("/admin/services");
   } catch (e) {
@@ -1284,17 +1249,14 @@ app.post("/admin/services", requireAdmin, async (req, res) => {
     const min = Number(req.body.min);
     const max = Number(req.body.max);
     const description = String(req.body.description || "").trim();
-
     if (!name || !category || !providerId || !Number.isFinite(rate) || rate <= 0 ||
         !Number.isInteger(min) || min < 1 || !Number.isInteger(max) || max < min) {
       return res.status(400).send("Invalid service details.");
     }
-
     const existing = await db(
       "SELECT id FROM services WHERE provider_source='manual' AND provider_id=$1 LIMIT 1",
       [providerId]
     );
-
     if (existing.rowCount) {
       await db(`
         UPDATE services SET name=$1,category=$2,rate=$3,min=$4,max=$5,
@@ -1358,7 +1320,9 @@ app.post("/admin/payments/:id/approve", requireAdmin, async (req, res) => {
     await client.query("BEGIN");
     started = true;
     const result = await client.query("SELECT * FROM payments WHERE id=$1 FOR UPDATE", [Number(req.params.id)]);
-    if (!result.rowCount || result.rows[0].status !== "Pending") throw new Error("Payment not found or already processed.");
+    if (!result.rowCount || result.rows[0].status !== "Pending") {
+      throw new Error("Payment not found or already processed.");
+    }
     const p = result.rows[0];
     await client.query("UPDATE users SET balance=balance+$1 WHERE id=$2", [p.amount, p.user_id]);
     await client.query("UPDATE payments SET status='Approved' WHERE id=$1", [p.id]);
@@ -1394,7 +1358,6 @@ app.get("/admin/orders", requireAdmin, async (req, res) => {
         </select><button>Save</button>
       </form></td></tr>
     `).join("");
-
     res.send(page("All Orders", `<div class="card tablewrap"><table>
       <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider Order ID</th><th>Update</th></tr>
       ${rows}</table></div>`, req.session.user));
@@ -1434,11 +1397,9 @@ async function start() {
   try {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is missing.");
     await setupDatabase();
-
     const server = app.listen(process.env.PORT || 3000, () => {
       console.log("ROYAL PANEL running.");
     });
-
     process.on("SIGTERM", () => {
       server.close(async () => {
         await pool.end();
