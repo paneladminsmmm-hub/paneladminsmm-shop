@@ -49,7 +49,7 @@ const WHATSAPP_NUMBER = WHATSAPP.replace(/\D/g, "");
 const TELEGRAM_URL = process.env.TELEGRAM_URL || "";
 
 const WHATSAPP_NUMBER = 918140989426
-const WHATSAPP_LINK =   https://wa.me/${WHATSAPP_NUMBER}?text=Hello%2 0 Royal%2 0 Panel%2 0 Support 
+const WHATSAPP_LINK =  "https://wa.me/$";{WHATSAPP_NUMBER}?text=Hello%2 0 Royal%2 0 Panel%2 0 Support 
 
 
 const TELEGRAM_USERNAME = "Digital_marketing_aagency_India",
