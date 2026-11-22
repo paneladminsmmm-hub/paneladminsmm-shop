@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -903,7 +902,7 @@ app.get("/new-order", requireLogin, async (req, res) => {
           <input name="link" type="url" placeholder="https://" required>
 
           <label>Quantity</label>
-          <input name="quantity" id="quantityInput" type="number" min="1" max="10000000" required>
+          <input name="quantity" id="quantityInput" type="number" required>
 
           <div style="background:#f3f4f6;color:#111;padding:15px;border-radius:10px;margin:15px 0">
             Total Price
@@ -924,15 +923,43 @@ app.get("/new-order", requireLogin, async (req, res) => {
 
         function update(){
           const o=s.options[s.selectedIndex];
+
+          if(!o || !o.value){
+            q.removeAttribute("min");
+            q.removeAttribute("max");
+            q.value="";
+            q.disabled=true;
+            total.textContent="₹0.00";
+            detail.textContent="Select service and quantity";
+            return;
+          }
+
           const rate=Number(o.dataset.rate);
-          const min=Number(o.dataset.min||1);
-          const max=Number(o.dataset.max||10000000);
+          const min=Number(o.dataset.min);
+          const max=Number(o.dataset.max);
+
+          if(
+            !Number.isSafeInteger(min) ||
+            !Number.isSafeInteger(max) ||
+            min<1 ||
+            max<min
+          ){
+            q.removeAttribute("min");
+            q.removeAttribute("max");
+            q.value="";
+            q.disabled=true;
+            total.textContent="₹0.00";
+            detail.textContent="Provider quantity limits are unavailable for this service.";
+            return;
+          }
+
+          q.disabled=false;
+          q.min=String(min);
+          q.max=String(max);
+
           const qty=Number(q.value);
 
-          q.min=min;
-          q.max=max;
-
-          if(!o.value || !Number.isInteger(qty) || qty<min || qty>max){
+          if(!Number.isInteger(qty) || qty<min || qty>max){
             total.textContent="₹0.00";
             detail.textContent="Quantity must be between "+min+" and "+max;
             return;
@@ -944,6 +971,8 @@ app.get("/new-order", requireLogin, async (req, res) => {
 
         s.addEventListener("change",update);
         q.addEventListener("input",update);
+
+        update();
       })();
       </script>
 
@@ -992,6 +1021,15 @@ app.post("/new-order", requireLogin, async (req, res) => {
 
     const user = ur.rows[0];
     const service = sr.rows[0];
+
+    if (
+      !Number.isInteger(Number(service.min)) ||
+      !Number.isInteger(Number(service.max)) ||
+      Number(service.min) < 1 ||
+      Number(service.max) < Number(service.min)
+    ) {
+      throw new Error("This service has invalid provider quantity limits.");
+    }
 
     if (
       quantity < Number(service.min) ||
@@ -1405,6 +1443,15 @@ app.post("/api/v2", resellerApiLimit, async (req, res) => {
 
         const user = ur.rows[0];
         const service = sr.rows[0];
+
+        if (
+          !Number.isInteger(Number(service.min)) ||
+          !Number.isInteger(Number(service.max)) ||
+          Number(service.min) < 1 ||
+          Number(service.max) < Number(service.min)
+        ) {
+          throw new Error("Invalid service quantity limits");
+        }
 
         if (
           quantity < Number(service.min) ||
