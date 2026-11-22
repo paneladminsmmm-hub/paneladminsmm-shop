@@ -217,12 +217,19 @@ function providerStatus(status) {
   return status || "Processing";
 }
 
+// PROVIDER RATE VALIDATION
 function calculateProviderRate(providerRate) {
   const rate = Number(providerRate);
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new Error("SocialAdd से Provider Rate सही नहीं मिला।");
   }
   return rate;
+}
+
+// SELLING RATE = PROVIDER RATE + 75%
+function calculateSellingRate(providerRate) {
+  const rawRate = calculateProviderRate(providerRate);
+  return Number((rawRate * 1.75).toFixed(4));
 }
 
 function categoryFromName(name, category) {
@@ -1499,7 +1506,8 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
         <h3>SocialAdd API Connection</h3>
         <p>API URL: ${esc(PROVIDER_URL)}</p>
         <p>API Key: ${PROVIDER_KEY ? "Configured" : "Not configured"}</p>
-        <p>Provider Rate: SocialAdd API का INR rate सीधे import होगा।</p>
+        <p>Provider Rate: SocialAdd का मूल INR rate सेव होगा।</p>
+        <p>Selling Rate: Provider Rate से 75% ज्यादा (× 1.75)।</p>
         <p>Imported SocialAdd services: ${counts.rows[0].imported}</p>
         <p>Active SocialAdd services: ${counts.rows[0].active}</p>
 
@@ -1508,11 +1516,11 @@ app.get("/admin/provider", requireAdmin, async (req, res) => {
         </form>
 
         <form method="POST" action="/admin/provider/import"
-          onsubmit="return confirm('सिर्फ Instagram services import होंगी। बाकी services inactive रहेंगी और Instagram की कीमतें SocialAdd Rate से अपडेट होंगी।')">
+          onsubmit="return confirm('सिर्फ Instagram services import होंगी। Selling Rate Provider Rate से 75% ज्यादा सेट होगी। बाकी services inactive रहेंगी।')">
           <button class="success">Import / Update Instagram Services</button>
         </form>
 
-        <p><small>Import के बाद Manage Services में अपनी Selling Price सेट कर सकते हो। अगली Import पर कीमत फिर Provider Rate से अपडेट होगी।</small></p>
+        <p><small>Import करने पर Instagram services की Selling Price अपने आप Provider Rate × 1.75 होगी। Manage Services में इसे बाद में मैन्युअली बदल भी सकते हो। अगली Import पर फिर 75% markup लागू होगा।</small></p>
       </div>
 
       <div class="card">
@@ -1602,7 +1610,11 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         continue;
       }
 
+      // ORIGINAL PROVIDER RATE
       const exactProviderRate = calculateProviderRate(providerRate);
+
+      // CUSTOMER SELLING RATE = PROVIDER RATE + 75%
+      const sellingRate = calculateSellingRate(exactProviderRate);
 
       await client.query(`
         INSERT INTO services
@@ -1626,7 +1638,7 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         name,
         "Instagram",
         `SocialAdd ${type} service`,
-        exactProviderRate,
+        sellingRate,
         min,
         max,
         type,
@@ -1644,8 +1656,9 @@ app.post("/admin/provider/import", requireAdmin, async (req, res) => {
         <h3>Import Complete</h3>
         <p>Instagram services imported: ${imported}</p>
         <p>Other services skipped: ${skipped}</p>
-        <p>SocialAdd की INR Provider Rate सीधे Selling Rate में सेव हुई है।</p>
-        <p>पुरानी Instagram services की कीमतें भी अपडेट हुई हैं।</p>
+        <p>Provider Rate: SocialAdd का मूल INR rate सेव हुआ है।</p>
+        <p>Selling Rate: Provider Rate से 75% ज्यादा (× 1.75) सेव हुई है।</p>
+        <p>पुरानी Instagram services की Selling Price भी अपडेट हुई है।</p>
         <p>अब सिर्फ Instagram services active रहेंगी।</p>
         <a class="btn" href="/admin/services">Manage Service Prices</a>
         <a class="btn" href="/admin/provider">Provider Page</a>
@@ -1802,7 +1815,7 @@ app.get("/admin/services", requireAdmin, async (req, res) => {
 
       <div class="card tablewrap">
         <h3>Services and Provider IDs</h3>
-        <p><small>Provider Rate = SocialAdd API से आया हुआ INR rate। Selling Rate = ग्राहक को दिखाई जाने वाली कीमत (₹)।</small></p>
+        <p><small>Provider Rate = SocialAdd API का मूल INR rate। Selling Rate = Provider Rate से 75% ज्यादा ग्राहक की कीमत (× 1.75)।</small></p>
         <table>
           <tr>
             <th>Database ID</th><th>Service Name</th><th>Category</th>
