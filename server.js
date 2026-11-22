@@ -17,8 +17,6 @@ app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-// Public folder: payment QR image and other public files
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use(rateLimit({
@@ -265,68 +263,557 @@ function socialSupportLinks() {
   `;
 }
 
+/* =====================================================
+   NEW ROYAL PANEL PAGE DESIGN + SIDE NAVIGATION
+===================================================== */
+
 function page(title, body, user = null) {
+  const adminMenu = user?.is_admin ? `
+    <div class="menu-section-title">ADMINISTRATION</div>
+    <a class="menu-link" href="/admin">
+      <span class="menu-icon">⚙️</span><span>Admin Dashboard</span>
+    </a>
+    <a class="menu-link" href="/admin/services">
+      <span class="menu-icon">🛠️</span><span>Manage Services</span>
+    </a>
+    <a class="menu-link" href="/admin/payments">
+      <span class="menu-icon">💳</span><span>Fund Approvals</span>
+    </a>
+    <a class="menu-link" href="/admin/refunds">
+      <span class="menu-icon">↩️</span><span>Refund Approvals</span>
+    </a>
+    <a class="menu-link" href="/admin/orders">
+      <span class="menu-icon">📦</span><span>Manage Orders</span>
+    </a>
+    <a class="menu-link" href="/admin/users">
+      <span class="menu-icon">👥</span><span>Customers</span>
+    </a>
+  ` : "";
+
   return `<!DOCTYPE html>
-  <html>
+  <html lang="en">
   <head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${title}</title>
+    <meta name="theme-color" content="#09090d">
+    <title>${title} | ROYAL PANEL</title>
+
     <style>
-      *{box-sizing:border-box}
-      body{
-        margin:0;font-family:Arial,sans-serif;color:#fff;
-        background:linear-gradient(135deg,#080808,#261020,#101b35,#080808);
-        background-size:300% 300%;animation:bg 12s ease infinite;
+      * {
+        box-sizing: border-box;
       }
-      @keyframes bg{0%{background-position:0% 50%}
-      50%{background-position:100% 50%}100%{background-position:0% 50%}}
-      header{background:#111;padding:15px;display:flex;
-      justify-content:space-between;flex-wrap:wrap;gap:12px}
-      a{color:#ff526b;text-decoration:none;margin:5px}
-      main{max-width:1000px;margin:25px auto;padding:15px}
-      .card{background:#171717eF;border:1px solid #393939;
-      border-radius:14px;padding:18px;margin:12px 0}
-      input,select,textarea{width:100%;padding:12px;margin:7px 0;
-      border-radius:8px;border:1px solid #555;background:#090909;color:white}
-      button{background:#e51d43;color:white;padding:11px 17px;
-      border:0;border-radius:8px;margin:5px;cursor:pointer}
-      table{width:100%;border-collapse:collapse;overflow:auto}
-      td,th{padding:9px;border-bottom:1px solid #444;text-align:left}
-      .muted{color:#bbb}
-      .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
-      .social-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
-      .social-link{display:inline-flex;align-items:center;gap:9px;
-        padding:11px 15px;border-radius:10px;color:white;
-        font-weight:bold;margin:0}
-      .whatsapp-link{background:#128c4a}
-      .telegram-link{background:#168acb}
-      .social-icon{width:23px;height:23px;display:inline-block;flex-shrink:0}
-      .search-box{margin:10px 0 15px}
-      .qr-box{text-align:center;margin:18px auto;padding:15px;
-        background:#fff;border-radius:14px;max-width:320px}
-      .qr-box img{display:block;width:100%;max-width:260px;
-        height:auto;margin:auto}
-      .qr-caption{color:#222;font-weight:bold;margin-top:10px}
-      .table-wrap{width:100%;overflow-x:auto}
-      .table-wrap table{min-width:650px}
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #fff;
+        background:
+          radial-gradient(ellipse at top left, #35101d 0%, transparent 42%),
+          radial-gradient(ellipse at bottom right, #101d3b 0%, transparent 45%),
+          #09090d;
+      }
+
+      body.menu-open {
+        overflow: hidden;
+      }
+
+      /* TOP HEADER */
+
+      .top-header {
+        width: 100%;
+        min-height: 82px;
+        padding: 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 15px;
+        background: rgba(12, 12, 17, 0.97);
+        border-bottom: 1px solid #30303a;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      .brand {
+        color: #fff;
+        font-size: 29px;
+        font-weight: 900;
+        letter-spacing: 1.5px;
+        text-decoration: none;
+        margin: 0;
+        text-shadow: 0 0 15px rgba(255,255,255,.15);
+      }
+
+      .menu-button {
+        width: 64px;
+        height: 58px;
+        border: 1px solid #e52b50;
+        border-radius: 12px;
+        background: #e51d43;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 7px;
+        cursor: pointer;
+        padding: 10px;
+        margin: 0;
+        box-shadow: 0 4px 18px rgba(229,29,67,.25);
+      }
+
+      .menu-button span {
+        display: block;
+        width: 32px;
+        height: 4px;
+        border-radius: 5px;
+        background: white;
+      }
+
+      .menu-button:hover {
+        background: #c91638;
+      }
+
+      /* SIDE MENU OVERLAY */
+
+      .menu-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.72);
+        z-index: 200;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity .25s ease, visibility .25s ease;
+      }
+
+      .menu-overlay.open {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      /* SIDE DRAWER */
+
+      .side-drawer {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 310px;
+        max-width: 86vw;
+        height: 100vh;
+        height: 100dvh;
+        overflow-y: auto;
+        background: #101015;
+        border-right: 1px solid #34343e;
+        z-index: 300;
+        transform: translateX(-105%);
+        transition: transform .28s ease;
+        padding: 0 15px 25px;
+        box-shadow: 10px 0 35px rgba(0,0,0,.4);
+      }
+
+      .side-drawer.open {
+        transform: translateX(0);
+      }
+
+      .drawer-header {
+        min-height: 82px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #33333c;
+        margin-bottom: 15px;
+        gap: 8px;
+      }
+
+      .drawer-brand {
+        font-size: 23px;
+        font-weight: 900;
+        letter-spacing: 1px;
+        color: white;
+      }
+
+      .close-menu {
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        margin: 0;
+        border-radius: 10px;
+        background: #292932;
+        color: white;
+        font-size: 27px;
+        line-height: 1;
+      }
+
+      .close-menu:hover {
+        background: #e51d43;
+      }
+
+      .menu-section-title {
+        color: #888894;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 1.5px;
+        padding: 17px 10px 8px;
+      }
+
+      .menu-link {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        width: 100%;
+        padding: 14px 12px;
+        margin: 4px 0;
+        color: #ededf2;
+        text-decoration: none;
+        font-size: 15px;
+        font-weight: 600;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        transition: background .2s, border .2s;
+      }
+
+      .menu-link:hover {
+        color: white;
+        background: #29202a;
+        border-color: #713044;
+      }
+
+      .menu-icon {
+        width: 27px;
+        text-align: center;
+        font-size: 19px;
+        flex-shrink: 0;
+      }
+
+      .logout-link {
+        color: #ff647c;
+        margin-top: 18px;
+        border-top: 1px solid #34343e;
+        border-radius: 0;
+        padding-top: 20px;
+      }
+
+      .logout-link:hover {
+        background: #32151e;
+      }
+
+      /* MAIN CONTENT */
+
+      main {
+        width: 100%;
+        max-width: 1100px;
+        margin: 25px auto;
+        padding: 15px;
+      }
+
+      .card {
+        background: rgba(23,23,29,.96);
+        border: 1px solid #393943;
+        border-radius: 15px;
+        padding: 20px;
+        margin: 13px 0;
+        box-shadow: 0 8px 25px rgba(0,0,0,.15);
+      }
+
+      h1, h2, h3 {
+        color: white;
+      }
+
+      a {
+        color: #ff526b;
+        text-decoration: none;
+      }
+
+      input, select, textarea {
+        width: 100%;
+        padding: 13px;
+        margin: 7px 0;
+        border-radius: 9px;
+        border: 1px solid #555560;
+        background: #09090e;
+        color: white;
+        font-size: 15px;
+      }
+
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: #e51d43;
+        box-shadow: 0 0 0 2px rgba(229,29,67,.15);
+      }
+
+      button {
+        background: #e51d43;
+        color: white;
+        padding: 12px 18px;
+        border: 0;
+        border-radius: 9px;
+        margin: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: bold;
+      }
+
+      button:hover {
+        background: #c91638;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      td, th {
+        padding: 11px;
+        border-bottom: 1px solid #44444e;
+        text-align: left;
+      }
+
+      th {
+        color: #ff758a;
+        white-space: nowrap;
+      }
+
+      .muted {
+        color: #bbb;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+        gap: 10px;
+      }
+
+      .social-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .social-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 11px 15px;
+        border-radius: 10px;
+        color: white;
+        font-weight: bold;
+        margin: 0;
+      }
+
+      .whatsapp-link {
+        background: #128c4a;
+      }
+
+      .telegram-link {
+        background: #168acb;
+      }
+
+      .social-icon {
+        width: 23px;
+        height: 23px;
+        display: inline-block;
+        flex-shrink: 0;
+      }
+
+      .search-box {
+        margin: 10px 0 15px;
+      }
+
+      .qr-box {
+        text-align: center;
+        margin: 18px auto;
+        padding: 15px;
+        background: #fff;
+        border-radius: 14px;
+        max-width: 320px;
+      }
+
+      .qr-box img {
+        display: block;
+        width: 100%;
+        max-width: 260px;
+        height: auto;
+        margin: auto;
+      }
+
+      .qr-caption {
+        color: #222;
+        font-weight: bold;
+        margin-top: 10px;
+      }
+
+      .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      .table-wrap table {
+        min-width: 650px;
+      }
+
+      @media(max-width:600px) {
+        .top-header {
+          min-height: 75px;
+          padding: 10px 13px;
+        }
+
+        .brand {
+          font-size: 23px;
+        }
+
+        .menu-button {
+          width: 58px;
+          height: 53px;
+        }
+
+        main {
+          margin: 15px auto;
+          padding: 10px;
+        }
+
+        .card {
+          padding: 15px;
+        }
+      }
     </style>
   </head>
+
   <body>
-    <header>
-      <b>ROYAL PANEL</b>
-      <nav>
-        ${user ? `<a href="/dashboard">Dashboard</a>
-        <a href="/services">Services</a>
-        <a href="/orders">Orders</a>
-        <a href="/funds">Add Funds</a>
-        <a href="/refund">Refund</a>
-        <a href="/support">Support</a>
-        ${user.is_admin ? '<a href="/admin">Admin</a>' : ''}
-        <a href="/logout">Logout</a>` : ''}
-      </nav>
+
+    <header class="top-header">
+      <a class="brand" href="${user ? "/dashboard" : "/login"}">
+        ROYAL PANEL
+      </a>
+
+      ${user ? `
+        <button
+          type="button"
+          class="menu-button"
+          onclick="openRoyalMenu()"
+          aria-label="Open Menu"
+          aria-expanded="false"
+          id="royalMenuButton"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      ` : ""}
     </header>
-    <main>${body}</main>
-  </body></html>`;
+
+    ${user ? `
+      <div
+        class="menu-overlay"
+        id="royalMenuOverlay"
+        onclick="closeRoyalMenu()"
+      ></div>
+
+      <aside class="side-drawer" id="royalSideDrawer">
+
+        <div class="drawer-header">
+          <div class="drawer-brand">ROYAL PANEL</div>
+          <button
+            type="button"
+            class="close-menu"
+            onclick="closeRoyalMenu()"
+            aria-label="Close Menu"
+          >×</button>
+        </div>
+
+        <div class="menu-section-title">MAIN MENU</div>
+
+        <a class="menu-link" href="/dashboard">
+          <span class="menu-icon">🏠</span>
+          <span>Dashboard</span>
+        </a>
+
+        <a class="menu-link" href="/services">
+          <span class="menu-icon">➕</span>
+          <span>New Order / Services</span>
+        </a>
+
+        <a class="menu-link" href="/orders">
+          <span class="menu-icon">📦</span>
+          <span>My Orders</span>
+        </a>
+
+        <a class="menu-link" href="/funds">
+          <span class="menu-icon">💰</span>
+          <span>Add Funds</span>
+        </a>
+
+        <a class="menu-link" href="/refund">
+          <span class="menu-icon">↩️</span>
+          <span>Refund Request</span>
+        </a>
+
+        <a class="menu-link" href="/support">
+          <span class="menu-icon">🎧</span>
+          <span>Support</span>
+        </a>
+
+        ${adminMenu}
+
+        <a class="menu-link logout-link" href="/logout">
+          <span class="menu-icon">🚪</span>
+          <span>Logout</span>
+        </a>
+
+      </aside>
+
+      <script>
+        function openRoyalMenu() {
+          const drawer = document.getElementById("royalSideDrawer");
+          const overlay = document.getElementById("royalMenuOverlay");
+          const button = document.getElementById("royalMenuButton");
+
+          if (!drawer || !overlay) return;
+
+          drawer.classList.add("open");
+          overlay.classList.add("open");
+          document.body.classList.add("menu-open");
+
+          if (button) {
+            button.setAttribute("aria-expanded", "true");
+          }
+        }
+
+        function closeRoyalMenu() {
+          const drawer = document.getElementById("royalSideDrawer");
+          const overlay = document.getElementById("royalMenuOverlay");
+          const button = document.getElementById("royalMenuButton");
+
+          if (!drawer || !overlay) return;
+
+          drawer.classList.remove("open");
+          overlay.classList.remove("open");
+          document.body.classList.remove("menu-open");
+
+          if (button) {
+            button.setAttribute("aria-expanded", "false");
+          }
+        }
+
+        document.addEventListener("keydown", function(event) {
+          if (event.key === "Escape") {
+            closeRoyalMenu();
+          }
+        });
+      </script>
+    ` : ""}
+
+    <main>
+      ${body}
+    </main>
+
+  </body>
+  </html>`;
 }
 
 function message(text) {
