@@ -49,6 +49,8 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const PROVIDER_URL =
   process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2"
 
+const UPI_ID = process.env.UPI_ID || "";
+
 
 /* SOCIALADD API - FIXED */
 
@@ -108,8 +110,6 @@ async function providerRequest(params) {
 
   return data;
 }
-
-const UPI_ID = process.env.UPI_ID || "";
 
 const WHATSAPP_NUMBER = "918140989426";
 const WHATSAPP_LINK =
