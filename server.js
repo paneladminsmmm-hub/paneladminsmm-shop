@@ -43,10 +43,12 @@ const PROVIDER_URL =
   process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
 
-const UPI_ID = process.env.UPI_ID || "";
-const WHATSAPP = process.env.SUPPORT_WHATSAPP || "";
-const WHATSAPP_NUMBER = WHATSAPP.replace(/\D/g, "");
-const TELEGRAM_URL = process.env.TELEGRAM_URL || "";
+const WHATSAPP_NUMBER = "918140989426";
+const WHATSAPP_LINK = https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support;
+
+const TELEGRAM_USERNAME = "Digital_marketing_aagency_India";
+const TELEGRAM_LINK = https://t.me/${TELEGRAM_USERNAME};
+
 
 const googleClient = new OAuth2Client(
   GOOGLE_CLIENT_ID,
