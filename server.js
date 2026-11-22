@@ -241,53 +241,27 @@ function socialSupportLinks() {
         <a class="social-link whatsapp-link"
            href="https://wa.me/${WHATSAPP_NUMBER}"
            target="_blank" rel="noopener noreferrer">
-          <svg class="social-icon" viewBox="0 0 24 24"
-               xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path fill="currentColor"
-              d="M20.52 3.48A11.8 11.8 0 0 0 12.13 0C5.55 0 .2 5.35.2 11.93c0 2.1.55 4.15 1.6 5.96L.1 24l6.27-1.64a11.9 11.9 0 0 0 5.76 1.47h.01c6.58 0 11.93-5.35 11.93-11.93a11.85 11.85 0 0 0-3.55-8.42ZM12.14 21.8a9.9 9.9 0 0 1-5.04-1.38l-.36-.21-3.72.98.99-3.63-.24-.37a9.86 9.86 0 0 1-1.52-5.26c0-5.46 4.45-9.91 9.91-9.91a9.84 9.84 0 0 1 7.01 2.91 9.84 9.84 0 0 1 2.9 7.01c0 5.46-4.45 9.91-9.92 9.91Zm5.44-7.42c-.3-.15-1.77-.87-2.04-.97-.28-.1-.48-.15-.68.15-.2.3-.78.97-.95 1.17-.18.2-.35.23-.65.08-.3-.15-1.26-.46-2.4-1.47-.88-.78-1.47-1.74-1.64-2.04-.17-.3-.02-.46.13-.61.14-.13.3-.35.45-.53.15-.18.2-.3.3-.5.1-.2.05-.38-.03-.53-.08-.15-.68-1.64-.93-2.25-.24-.59-.49-.51-.68-.52h-.58c-.2 0-.53.08-.8.38-.28.3-1.05 1.02-1.05 2.5s1.08 2.9 1.23 3.1c.15.2 2.12 3.24 5.14 4.55.72.31 1.28.5 1.72.64.72.23 1.38.2 1.9.12.58-.09 1.77-.72 2.02-1.42.25-.69.25-1.29.18-1.42-.08-.13-.28-.2-.58-.35Z"/>
-          </svg>
           WhatsApp Support
         </a>` : ""}
       ${TELEGRAM_URL ? `
         <a class="social-link telegram-link"
            href="${TELEGRAM_URL}"
            target="_blank" rel="noopener noreferrer">
-          <svg class="social-icon" viewBox="0 0 24 24"
-               xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path fill="currentColor"
-              d="M21.9 4.2 18.6 20c-.25 1.12-.9 1.4-1.82.88l-5.04-3.72-2.43 2.34c-.27.27-.5.5-1.02.5l.36-5.13 9.34-8.44c.4-.36-.09-.56-.62-.2L5.82 13.5.85 11.95c-1.08-.34-1.1-1.08.22-1.6L20.5 2.8c.9-.33 1.7.22 1.4 1.4Z"/>
-          </svg>
           Telegram Support
         </a>` : ""}
     </div>
   `;
 }
 
-/* =====================================================
-   NEW ROYAL PANEL PAGE DESIGN + SIDE NAVIGATION
-===================================================== */
-
 function page(title, body, user = null) {
   const adminMenu = user?.is_admin ? `
     <div class="menu-section-title">ADMINISTRATION</div>
-    <a class="menu-link" href="/admin">
-      <span class="menu-icon">⚙️</span><span>Admin Dashboard</span>
-    </a>
-    <a class="menu-link" href="/admin/services">
-      <span class="menu-icon">🛠️</span><span>Manage Services</span>
-    </a>
-    <a class="menu-link" href="/admin/payments">
-      <span class="menu-icon">💳</span><span>Fund Approvals</span>
-    </a>
-    <a class="menu-link" href="/admin/refunds">
-      <span class="menu-icon">↩️</span><span>Refund Approvals</span>
-    </a>
-    <a class="menu-link" href="/admin/orders">
-      <span class="menu-icon">📦</span><span>Manage Orders</span>
-    </a>
-    <a class="menu-link" href="/admin/users">
-      <span class="menu-icon">👥</span><span>Customers</span>
-    </a>
+    <a class="menu-link" href="/admin">⚙️ Admin Dashboard</a>
+    <a class="menu-link" href="/admin/services">🛠️ Manage Services</a>
+    <a class="menu-link" href="/admin/payments">💳 Fund Approvals</a>
+    <a class="menu-link" href="/admin/refunds">↩️ Refund Approvals</a>
+    <a class="menu-link" href="/admin/orders">📦 Manage Orders</a>
+    <a class="menu-link" href="/admin/users">👥 Customers</a>
   ` : "";
 
   return `<!DOCTYPE html>
@@ -297,521 +271,171 @@ function page(title, body, user = null) {
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09090d">
     <title>${title} | ROYAL PANEL</title>
-
     <style>
-      * {
-        box-sizing: border-box;
+      *{box-sizing:border-box}
+      html{scroll-behavior:smooth}
+      body{
+        margin:0;min-height:100vh;
+        font-family:Arial,Helvetica,sans-serif;color:#fff;
+        background:radial-gradient(ellipse at top left,#35101d 0%,transparent 42%),
+        radial-gradient(ellipse at bottom right,#101d3b 0%,transparent 45%),#09090d
       }
-
-      html {
-        scroll-behavior: smooth;
+      body.menu-open{overflow:hidden}
+      .top-header{
+        width:100%;min-height:82px;padding:12px 18px;
+        display:flex;align-items:center;justify-content:space-between;
+        gap:15px;background:rgba(12,12,17,.97);
+        border-bottom:1px solid #30303a;position:sticky;top:0;z-index:100
       }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: Arial, Helvetica, sans-serif;
-        color: #fff;
-        background:
-          radial-gradient(ellipse at top left, #35101d 0%, transparent 42%),
-          radial-gradient(ellipse at bottom right, #101d3b 0%, transparent 45%),
-          #09090d;
+      .brand{
+        color:#fff;font-size:29px;font-weight:900;letter-spacing:1.5px;
+        text-decoration:none;margin:0
       }
-
-      body.menu-open {
-        overflow: hidden;
+      .menu-button{
+        width:64px;height:58px;border:1px solid #e52b50;
+        border-radius:12px;background:#e51d43;color:white;
+        display:flex;align-items:center;justify-content:center;
+        flex-direction:column;gap:7px;cursor:pointer;padding:10px;margin:0
       }
-
-      /* TOP HEADER */
-
-      .top-header {
-        width: 100%;
-        min-height: 82px;
-        padding: 12px 18px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 15px;
-        background: rgba(12, 12, 17, 0.97);
-        border-bottom: 1px solid #30303a;
-        position: sticky;
-        top: 0;
-        z-index: 100;
+      .menu-button span{display:block;width:32px;height:4px;border-radius:5px;background:white}
+      .menu-overlay{
+        position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;
+        opacity:0;visibility:hidden;transition:.25s
       }
-
-      .brand {
-        color: #fff;
-        font-size: 29px;
-        font-weight: 900;
-        letter-spacing: 1.5px;
-        text-decoration: none;
-        margin: 0;
-        text-shadow: 0 0 15px rgba(255,255,255,.15);
+      .menu-overlay.open{opacity:1;visibility:visible}
+      .side-drawer{
+        position:fixed;top:0;left:0;width:310px;max-width:86vw;
+        height:100vh;height:100dvh;overflow-y:auto;background:#101015;
+        border-right:1px solid #34343e;z-index:300;
+        transform:translateX(-105%);transition:transform .28s ease;
+        padding:0 15px 25px;box-shadow:10px 0 35px rgba(0,0,0,.4)
       }
-
-      .menu-button {
-        width: 64px;
-        height: 58px;
-        border: 1px solid #e52b50;
-        border-radius: 12px;
-        background: #e51d43;
-        color: white;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-direction: column;
-        gap: 7px;
-        cursor: pointer;
-        padding: 10px;
-        margin: 0;
-        box-shadow: 0 4px 18px rgba(229,29,67,.25);
+      .side-drawer.open{transform:translateX(0)}
+      .drawer-header{
+        min-height:82px;display:flex;align-items:center;
+        justify-content:space-between;border-bottom:1px solid #33333c;
+        margin-bottom:15px;gap:8px
       }
-
-      .menu-button span {
-        display: block;
-        width: 32px;
-        height: 4px;
-        border-radius: 5px;
-        background: white;
+      .drawer-brand{font-size:23px;font-weight:900;letter-spacing:1px;color:white}
+      .close-menu{
+        width:42px;height:42px;padding:0;margin:0;border-radius:10px;
+        background:#292932;color:white;font-size:27px;line-height:1
       }
-
-      .menu-button:hover {
-        background: #c91638;
+      .menu-section-title{
+        color:#888894;font-size:11px;font-weight:bold;
+        letter-spacing:1.5px;padding:17px 10px 8px
       }
-
-      /* SIDE MENU OVERLAY */
-
-      .menu-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,.72);
-        z-index: 200;
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity .25s ease, visibility .25s ease;
+      .menu-link{
+        display:flex;align-items:center;gap:13px;width:100%;
+        padding:14px 12px;margin:4px 0;color:#ededf2;
+        text-decoration:none;font-size:15px;font-weight:600;
+        border:1px solid transparent;border-radius:10px
       }
-
-      .menu-overlay.open {
-        opacity: 1;
-        visibility: visible;
+      .menu-link:hover{color:white;background:#29202a;border-color:#713044}
+      .logout-link{
+        color:#ff647c;margin-top:18px;border-top:1px solid #34343e;
+        border-radius:0;padding-top:20px
       }
-
-      /* SIDE DRAWER */
-
-      .side-drawer {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 310px;
-        max-width: 86vw;
-        height: 100vh;
-        height: 100dvh;
-        overflow-y: auto;
-        background: #101015;
-        border-right: 1px solid #34343e;
-        z-index: 300;
-        transform: translateX(-105%);
-        transition: transform .28s ease;
-        padding: 0 15px 25px;
-        box-shadow: 10px 0 35px rgba(0,0,0,.4);
+      main{width:100%;max-width:1100px;margin:25px auto;padding:15px}
+      .card{
+        background:rgba(23,23,29,.96);border:1px solid #393943;
+        border-radius:15px;padding:20px;margin:13px 0;
+        box-shadow:0 8px 25px rgba(0,0,0,.15)
       }
-
-      .side-drawer.open {
-        transform: translateX(0);
+      h1,h2,h3{color:white}
+      a{color:#ff526b;text-decoration:none}
+      input,select,textarea{
+        width:100%;padding:13px;margin:7px 0;border-radius:9px;
+        border:1px solid #555560;background:#09090e;color:white;font-size:15px
       }
-
-      .drawer-header {
-        min-height: 82px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid #33333c;
-        margin-bottom: 15px;
-        gap: 8px;
+      input:focus,select:focus,textarea:focus{
+        outline:none;border-color:#e51d43;box-shadow:0 0 0 2px rgba(229,29,67,.15)
       }
-
-      .drawer-brand {
-        font-size: 23px;
-        font-weight: 900;
-        letter-spacing: 1px;
-        color: white;
+      button{
+        background:#e51d43;color:white;padding:12px 18px;border:0;
+        border-radius:9px;margin:5px;cursor:pointer;font-size:14px;font-weight:bold
       }
-
-      .close-menu {
-        width: 42px;
-        height: 42px;
-        padding: 0;
-        margin: 0;
-        border-radius: 10px;
-        background: #292932;
-        color: white;
-        font-size: 27px;
-        line-height: 1;
-      }
-
-      .close-menu:hover {
-        background: #e51d43;
-      }
-
-      .menu-section-title {
-        color: #888894;
-        font-size: 11px;
-        font-weight: bold;
-        letter-spacing: 1.5px;
-        padding: 17px 10px 8px;
-      }
-
-      .menu-link {
-        display: flex;
-        align-items: center;
-        gap: 13px;
-        width: 100%;
-        padding: 14px 12px;
-        margin: 4px 0;
-        color: #ededf2;
-        text-decoration: none;
-        font-size: 15px;
-        font-weight: 600;
-        border: 1px solid transparent;
-        border-radius: 10px;
-        transition: background .2s, border .2s;
-      }
-
-      .menu-link:hover {
-        color: white;
-        background: #29202a;
-        border-color: #713044;
-      }
-
-      .menu-icon {
-        width: 27px;
-        text-align: center;
-        font-size: 19px;
-        flex-shrink: 0;
-      }
-
-      .logout-link {
-        color: #ff647c;
-        margin-top: 18px;
-        border-top: 1px solid #34343e;
-        border-radius: 0;
-        padding-top: 20px;
-      }
-
-      .logout-link:hover {
-        background: #32151e;
-      }
-
-      /* MAIN CONTENT */
-
-      main {
-        width: 100%;
-        max-width: 1100px;
-        margin: 25px auto;
-        padding: 15px;
-      }
-
-      .card {
-        background: rgba(23,23,29,.96);
-        border: 1px solid #393943;
-        border-radius: 15px;
-        padding: 20px;
-        margin: 13px 0;
-        box-shadow: 0 8px 25px rgba(0,0,0,.15);
-      }
-
-      h1, h2, h3 {
-        color: white;
-      }
-
-      a {
-        color: #ff526b;
-        text-decoration: none;
-      }
-
-      input, select, textarea {
-        width: 100%;
-        padding: 13px;
-        margin: 7px 0;
-        border-radius: 9px;
-        border: 1px solid #555560;
-        background: #09090e;
-        color: white;
-        font-size: 15px;
-      }
-
-      input:focus, select:focus, textarea:focus {
-        outline: none;
-        border-color: #e51d43;
-        box-shadow: 0 0 0 2px rgba(229,29,67,.15);
-      }
-
-      button {
-        background: #e51d43;
-        color: white;
-        padding: 12px 18px;
-        border: 0;
-        border-radius: 9px;
-        margin: 5px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: bold;
-      }
-
-      button:hover {
-        background: #c91638;
-      }
-
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-
-      td, th {
-        padding: 11px;
-        border-bottom: 1px solid #44444e;
-        text-align: left;
-      }
-
-      th {
-        color: #ff758a;
-        white-space: nowrap;
-      }
-
-      .muted {
-        color: #bbb;
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
-        gap: 10px;
-      }
-
-      .social-links {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 12px;
-      }
-
-      .social-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        padding: 11px 15px;
-        border-radius: 10px;
-        color: white;
-        font-weight: bold;
-        margin: 0;
-      }
-
-      .whatsapp-link {
-        background: #128c4a;
-      }
-
-      .telegram-link {
-        background: #168acb;
-      }
-
-      .social-icon {
-        width: 23px;
-        height: 23px;
-        display: inline-block;
-        flex-shrink: 0;
-      }
-
-      .search-box {
-        margin: 10px 0 15px;
-      }
-
-      .qr-box {
-        text-align: center;
-        margin: 18px auto;
-        padding: 15px;
-        background: #fff;
-        border-radius: 14px;
-        max-width: 320px;
-      }
-
-      .qr-box img {
-        display: block;
-        width: 100%;
-        max-width: 260px;
-        height: auto;
-        margin: auto;
-      }
-
-      .qr-caption {
-        color: #222;
-        font-weight: bold;
-        margin-top: 10px;
-      }
-
-      .table-wrap {
-        width: 100%;
-        overflow-x: auto;
-      }
-
-      .table-wrap table {
-        min-width: 650px;
-      }
-
-      @media(max-width:600px) {
-        .top-header {
-          min-height: 75px;
-          padding: 10px 13px;
-        }
-
-        .brand {
-          font-size: 23px;
-        }
-
-        .menu-button {
-          width: 58px;
-          height: 53px;
-        }
-
-        main {
-          margin: 15px auto;
-          padding: 10px;
-        }
-
-        .card {
-          padding: 15px;
-        }
+      button:hover{background:#c91638}
+      table{width:100%;border-collapse:collapse}
+      td,th{padding:11px;border-bottom:1px solid #44444e;text-align:left}
+      th{color:#ff758a;white-space:nowrap}
+      .muted{color:#bbb}
+      .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+      .social-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+      .social-link{display:inline-flex;align-items:center;gap:9px;padding:11px 15px;border-radius:10px;color:white;font-weight:bold;margin:0}
+      .whatsapp-link{background:#128c4a}
+      .telegram-link{background:#168acb}
+      .search-box{margin:10px 0 15px}
+      .qr-box{text-align:center;margin:18px auto;padding:15px;background:#fff;border-radius:14px;max-width:320px}
+      .qr-box img{display:block;width:100%;max-width:260px;height:auto;margin:auto}
+      .qr-caption{color:#222;font-weight:bold;margin-top:10px}
+      .table-wrap{width:100%;overflow-x:auto}
+      .table-wrap table{min-width:650px}
+      @media(max-width:600px){
+        .top-header{min-height:75px;padding:10px 13px}
+        .brand{font-size:23px}
+        .menu-button{width:58px;height:53px}
+        main{margin:15px auto;padding:10px}
+        .card{padding:15px}
       }
     </style>
   </head>
-
   <body>
-
     <header class="top-header">
-      <a class="brand" href="${user ? "/dashboard" : "/login"}">
-        ROYAL PANEL
-      </a>
-
+      <a class="brand" href="${user ? "/services" : "/login"}">ROYAL PANEL</a>
       ${user ? `
-        <button
-          type="button"
-          class="menu-button"
-          onclick="openRoyalMenu()"
-          aria-label="Open Menu"
-          aria-expanded="false"
-          id="royalMenuButton"
-        >
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
-      ` : ""}
+        <button type="button" class="menu-button"
+          onclick="openRoyalMenu()" aria-label="Open Menu"
+          aria-expanded="false" id="royalMenuButton">
+          <span></span><span></span><span></span>
+        </button>` : ""}
     </header>
 
     ${user ? `
-      <div
-        class="menu-overlay"
-        id="royalMenuOverlay"
-        onclick="closeRoyalMenu()"
-      ></div>
-
+      <div class="menu-overlay" id="royalMenuOverlay"
+        onclick="closeRoyalMenu()"></div>
       <aside class="side-drawer" id="royalSideDrawer">
-
         <div class="drawer-header">
           <div class="drawer-brand">ROYAL PANEL</div>
-          <button
-            type="button"
-            class="close-menu"
-            onclick="closeRoyalMenu()"
-            aria-label="Close Menu"
-          >×</button>
+          <button type="button" class="close-menu"
+            onclick="closeRoyalMenu()" aria-label="Close Menu">×</button>
         </div>
-
         <div class="menu-section-title">MAIN MENU</div>
-
-        <a class="menu-link" href="/dashboard">
-          <span class="menu-icon">🏠</span>
-          <span>Dashboard</span>
-        </a>
-
-        <a class="menu-link" href="/services">
-          <span class="menu-icon">➕</span>
-          <span>New Order / Services</span>
-        </a>
-
-        <a class="menu-link" href="/orders">
-          <span class="menu-icon">📦</span>
-          <span>My Orders</span>
-        </a>
-
-        <a class="menu-link" href="/funds">
-          <span class="menu-icon">💰</span>
-          <span>Add Funds</span>
-        </a>
-
-        <a class="menu-link" href="/refund">
-          <span class="menu-icon">↩️</span>
-          <span>Refund Request</span>
-        </a>
-
-        <a class="menu-link" href="/support">
-          <span class="menu-icon">🎧</span>
-          <span>Support</span>
-        </a>
-
+        <a class="menu-link" href="/services">➕ New Order / Services</a>
+        <a class="menu-link" href="/orders">📦 My Orders</a>
+        <a class="menu-link" href="/funds">💰 Add Funds</a>
+        <a class="menu-link" href="/refund">↩️ Refund Request</a>
+        <a class="menu-link" href="/support">🎧 Support</a>
         ${adminMenu}
-
-        <a class="menu-link logout-link" href="/logout">
-          <span class="menu-icon">🚪</span>
-          <span>Logout</span>
-        </a>
-
+        <a class="menu-link logout-link" href="/logout">🚪 Logout</a>
       </aside>
-
       <script>
-        function openRoyalMenu() {
-          const drawer = document.getElementById("royalSideDrawer");
-          const overlay = document.getElementById("royalMenuOverlay");
-          const button = document.getElementById("royalMenuButton");
-
-          if (!drawer || !overlay) return;
-
+        function openRoyalMenu(){
+          const drawer=document.getElementById("royalSideDrawer");
+          const overlay=document.getElementById("royalMenuOverlay");
+          const button=document.getElementById("royalMenuButton");
+          if(!drawer||!overlay)return;
           drawer.classList.add("open");
           overlay.classList.add("open");
           document.body.classList.add("menu-open");
-
-          if (button) {
-            button.setAttribute("aria-expanded", "true");
-          }
+          if(button)button.setAttribute("aria-expanded","true");
         }
-
-        function closeRoyalMenu() {
-          const drawer = document.getElementById("royalSideDrawer");
-          const overlay = document.getElementById("royalMenuOverlay");
-          const button = document.getElementById("royalMenuButton");
-
-          if (!drawer || !overlay) return;
-
+        function closeRoyalMenu(){
+          const drawer=document.getElementById("royalSideDrawer");
+          const overlay=document.getElementById("royalMenuOverlay");
+          const button=document.getElementById("royalMenuButton");
+          if(!drawer||!overlay)return;
           drawer.classList.remove("open");
           overlay.classList.remove("open");
           document.body.classList.remove("menu-open");
-
-          if (button) {
-            button.setAttribute("aria-expanded", "false");
-          }
+          if(button)button.setAttribute("aria-expanded","false");
         }
-
-        document.addEventListener("keydown", function(event) {
-          if (event.key === "Escape") {
-            closeRoyalMenu();
-          }
+        document.addEventListener("keydown",function(event){
+          if(event.key==="Escape")closeRoyalMenu();
         });
       </script>
     ` : ""}
-
-    <main>
-      ${body}
-    </main>
-
+    <main>${body}</main>
   </body>
   </html>`;
 }
@@ -823,10 +447,7 @@ function message(text) {
 async function providerRequest(params) {
   if (!PROVIDER_KEY) throw new Error("SocialAdd API key missing");
 
-  const body = new URLSearchParams({
-    key: PROVIDER_KEY,
-    ...params
-  });
+  const body = new URLSearchParams({ key: PROVIDER_KEY, ...params });
 
   const response = await fetch(PROVIDER_URL, {
     method: "POST",
@@ -840,7 +461,6 @@ async function providerRequest(params) {
   if (!response.ok || data.error) {
     throw new Error(data.error || `Provider HTTP ${response.status}`);
   }
-
   return data;
 }
 
@@ -850,7 +470,7 @@ function isInstagram(item) {
 }
 
 app.get("/", (req, res) => {
-  res.redirect(req.session.user ? "/dashboard" : "/login");
+  res.redirect(req.session.user ? "/services" : "/login");
 });
 
 app.get("/login", (req, res) => {
@@ -892,7 +512,7 @@ app.post("/login", async (req, res) => {
       is_admin: user.is_admin
     };
 
-    res.redirect("/dashboard");
+    res.redirect("/services");
   } catch (e) {
     res.status(500).send(e.message);
   }
@@ -905,8 +525,7 @@ app.get("/register", (req, res) => {
       <form method="POST" action="/register">
         <input name="username" placeholder="Username" required>
         <input name="email" type="email" placeholder="Email" required>
-        <input name="password" type="password" minlength="6"
-        placeholder="Password" required>
+        <input name="password" type="password" minlength="6" placeholder="Password" required>
         <button>Continue</button>
       </form>
       <a href="/auth/google">Continue with Google</a>
@@ -925,7 +544,6 @@ app.post("/register", async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 12);
-
     const result = await db(
       `INSERT INTO users(username,email,password_hash,password)
        VALUES($1,$2,$3,$3) RETURNING *`,
@@ -937,7 +555,7 @@ app.post("/register", async (req, res) => {
       id: user.id, username, email, is_admin: false
     };
 
-    res.redirect("/dashboard");
+    res.redirect("/services");
   } catch (e) {
     res.status(400).send(page("Register", message("Username or email already exists")));
   }
@@ -1016,38 +634,28 @@ app.get("/auth/google/callback", async (req, res) => {
       is_admin: user.is_admin
     };
 
-    res.redirect("/dashboard");
+    res.redirect("/services");
   } catch (e) {
     res.status(500).send("Google Login failed: " + e.message);
   }
 });
 
-app.get("/dashboard", requireLogin, async (req, res) => {
-  const r = await db(`SELECT balance FROM users WHERE id=$1`, [req.session.user.id]);
-  const balance = r.rows[0]?.balance || 0;
-
-  res.send(page("Dashboard", `
-    <div class="card">
-      <h2>Welcome ${req.session.user.username}</h2>
-      <h3>Wallet Balance: ₹${Number(balance).toFixed(2)}</h3>
-    </div>
-    <div class="grid">
-      <div class="card"><a href="/services">New Order / Services</a></div>
-      <div class="card"><a href="/orders">My Orders</a></div>
-      <div class="card"><a href="/funds">Add Funds</a></div>
-      <div class="card"><a href="/refund">Refund Request</a></div>
-      <div class="card"><a href="/support">Support</a></div>
-    </div>
-    <div class="card">
-      <h3>Contact Support</h3>
-      ${socialSupportLinks()}
-    </div>
-  `, req.session.user));
+// Old Dashboard URL now redirects to New Order
+app.get("/dashboard", requireLogin, (req, res) => {
+  res.redirect("/services");
 });
 
-// Customer Instagram services with live search
+// Customer Instagram services and wallet balance
 app.get("/services", requireLogin, async (req, res) => {
   const enabled = await setting("services_enabled");
+
+  const walletResult = await db(
+    `SELECT balance FROM users WHERE id=$1`,
+    [req.session.user.id]
+  );
+
+  const balance = Number(walletResult.rows[0]?.balance || 0);
+
   const r = await db(
     `SELECT * FROM services WHERE active=TRUE
      AND LOWER(category) LIKE '%instagram%' ORDER BY id DESC`
@@ -1060,18 +668,29 @@ app.get("/services", requireLogin, async (req, res) => {
     </option>
   `).join("");
 
-  res.send(page("Instagram Services", `
+  res.send(page("New Order", `
     <div class="card">
-      <h2>Instagram Services</h2>
+      <div style="
+        background:#101d3b;
+        border:1px solid #e51d43;
+        border-radius:12px;
+        padding:16px;
+        margin-bottom:18px;
+      ">
+        <div style="color:#bbb;font-size:14px;">WALLET BALANCE</div>
+        <h2 style="color:#fff;margin:8px 0 0;">
+          ₹${balance.toFixed(2)}
+        </h2>
+      </div>
+
+      <h2>New Order / Instagram Services</h2>
+
       ${enabled === "true" ? `
         <form method="POST" action="/order">
-          <input
-            type="search"
-            id="serviceSearch"
+          <input type="search" id="serviceSearch"
             class="search-box"
             placeholder="Search Instagram services..."
-            autocomplete="off"
-          >
+            autocomplete="off">
           <select name="service_id" id="serviceSelect" required>
             <option value="">Select a service</option>
             ${rows}
@@ -1082,21 +701,16 @@ app.get("/services", requireLogin, async (req, res) => {
         </form>
         <script>
           (function(){
-            const search = document.getElementById("serviceSearch");
-            const select = document.getElementById("serviceSelect");
-            const options = Array.from(select.options);
-
-            search.addEventListener("input", function(){
-              const term = this.value.toLowerCase().trim();
-
-              options.forEach(function(option, index){
-                if(index === 0) return;
-                option.hidden = !option.text.toLowerCase().includes(term);
+            const search=document.getElementById("serviceSearch");
+            const select=document.getElementById("serviceSelect");
+            const options=Array.from(select.options);
+            search.addEventListener("input",function(){
+              const term=this.value.toLowerCase().trim();
+              options.forEach(function(option,index){
+                if(index===0)return;
+                option.hidden=!option.text.toLowerCase().includes(term);
               });
-
-              if(select.selectedOptions[0]?.hidden){
-                select.value = "";
-              }
+              if(select.selectedOptions[0]?.hidden)select.value="";
             });
           })();
         </script>
@@ -1159,9 +773,6 @@ app.post("/order", requireLogin, async (req, res) => {
 
     await client.query("COMMIT");
 
-    let providerOrderId = null;
-    let status = "Pending";
-
     if (service.provider_source === "socialadd" &&
         await setting("provider_enabled") === "true") {
       try {
@@ -1173,12 +784,9 @@ app.post("/order", requireLogin, async (req, res) => {
         });
 
         if (data.order) {
-          providerOrderId = String(data.order);
-          status = "Processing";
-
           await db(
-            `UPDATE orders SET provider_order_id=$1,status=$2 WHERE id=$3`,
-            [providerOrderId, status, orderResult.rows[0].id]
+            `UPDATE orders SET provider_order_id=$1,status='Processing' WHERE id=$2`,
+            [String(data.order), orderResult.rows[0].id]
           );
         } else {
           throw new Error(data.error || "Provider did not return order ID");
@@ -1220,30 +828,23 @@ app.get("/orders", requireLogin, async (req, res) => {
   `, req.session.user));
 });
 
-// Add Funds with uploaded public/payment-qr.png
+// Add Funds with public/payment-qr.png
 app.get("/funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
       <h2>Add Funds - Admin Approval</h2>
-
       <div class="qr-box">
-        <img
-          src="/payment-qr.png"
-          alt="UPI Payment QR Code"
-          onerror="this.style.display='none';document.getElementById('qrError').style.display='block';"
-        >
+        <img src="/payment-qr.png" alt="UPI Payment QR Code"
+          onerror="this.style.display='none';document.getElementById('qrError').style.display='block';">
         <div class="qr-caption">Scan QR Code to Pay</div>
       </div>
-
       <p id="qrError" style="display:none;color:#ff526b;text-align:center;">
         QR image could not be loaded. Check public/payment-qr.png
       </p>
-
       <p>UPI ID: <b>${UPI_ID}</b></p>
-
       <form method="POST" action="/funds">
         <input name="amount" type="number" min="10" max="2000"
-        step="0.01" placeholder="Amount ₹10 - ₹2000" required>
+          step="0.01" placeholder="Amount ₹10 - ₹2000" required>
         <input name="utr" placeholder="UTR / Transaction ID" required>
         <button>Submit Payment</button>
       </form>
@@ -1275,7 +876,7 @@ app.get("/refund", requireLogin, (req, res) => {
       <h2>Refund Request</h2>
       <form method="POST" action="/refund">
         <input name="amount" type="number" min="10" max="2000"
-        step="0.01" placeholder="₹10 - ₹2000" required>
+          step="0.01" placeholder="₹10 - ₹2000" required>
         <textarea name="reason" placeholder="Refund reason" required></textarea>
         <button>Submit Refund Request</button>
       </form>
@@ -1327,7 +928,7 @@ app.post("/support", requireLogin, async (req, res) => {
     [req.session.user.id, String(req.body.message || "").slice(0, 3000)]
   );
 
-  res.redirect("/dashboard");
+  res.redirect("/services");
 });
 
 app.get("/admin", requireLogin, requireAdmin, async (req, res) => {
@@ -1350,7 +951,6 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res) => {
       <p>Pending Funds: ${counts.rows[0].pending_payments}</p>
       <p>Pending Refunds: ${counts.rows[0].pending_refunds}</p>
     </div>
-
     <div class="card">
       <h3>SocialAdd Provider</h3>
       <p>API: ${provider === "true" ? "Enabled" : "Disabled"}</p>
@@ -1365,7 +965,6 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res) => {
         <button>Test Provider API</button>
       </form>
     </div>
-
     <div class="card">
       <h3>All Instagram Services</h3>
       <p>Services: ${servicesEnabled === "true" ? "Enabled" : "Disabled"}</p>
@@ -1374,7 +973,6 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res) => {
         <button name="value" value="false">Disable All Services</button>
       </form>
     </div>
-
     <div class="card">
       <a href="/admin/services">Manage Services</a> |
       <a href="/admin/payments">Fund Approvals</a> |
@@ -1483,7 +1081,6 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   }
 });
 
-// Admin services page with search
 app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
   const r = await db(
     `SELECT * FROM services
@@ -1499,8 +1096,7 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
       <td>${s.active ? "Active" : "Disabled"}</td>
       <td>
         <form method="POST" action="/admin/service/${s.id}">
-          <input name="rate" type="number" step="0.0001"
-          value="${s.rate}" required>
+          <input name="rate" type="number" step="0.0001" value="${s.rate}" required>
           <button name="active" value="${!s.active}">${s.active ? "Disable" : "Enable"}</button>
           <button name="save" value="1">Save Price</button>
         </form>
@@ -1511,38 +1107,28 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
   res.send(page("Manage Services", `
     <div class="card">
       <h2>Instagram Services</h2>
-      <input
-        type="search"
-        id="adminServiceSearch"
+      <input type="search" id="adminServiceSearch"
         class="search-box"
         placeholder="Search services by name, ID or status..."
-        autocomplete="off"
-      >
+        autocomplete="off">
       <div class="table-wrap">
         <table id="adminServicesTable">
-          <thead>
-            <tr>
-              <th>ID</th><th>Name</th><th>Provider Rate</th>
-              <th>Selling Rate</th><th>Status</th><th>Manage</th>
-            </tr>
-          </thead>
+          <thead><tr>
+            <th>ID</th><th>Name</th><th>Provider Rate</th>
+            <th>Selling Rate</th><th>Status</th><th>Manage</th>
+          </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
     </div>
-
     <script>
       (function(){
-        const search = document.getElementById("adminServiceSearch");
-        const tableRows = document.querySelectorAll(".admin-service-row");
-
-        search.addEventListener("input", function(){
-          const term = this.value.toLowerCase().trim();
-
+        const search=document.getElementById("adminServiceSearch");
+        const tableRows=document.querySelectorAll(".admin-service-row");
+        search.addEventListener("input",function(){
+          const term=this.value.toLowerCase().trim();
           tableRows.forEach(function(row){
-            row.style.display = row.textContent.toLowerCase().includes(term)
-              ? ""
-              : "none";
+            row.style.display=row.textContent.toLowerCase().includes(term)?"":"none";
           });
         });
       })();
