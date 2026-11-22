@@ -1,6 +1,4 @@
-
 require("dotenv").config();
-
 const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
@@ -13,12 +11,10 @@ const path = require("path");
 
 const app = express();
 app.set("trust proxy", 1);
-
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
-
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
@@ -36,24 +32,20 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+const db = (sql, values = []) => pool.query(sql, values);
+
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const APP_URL = (process.env.APP_URL || "").replace(/\/$/, "");
-
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
-
-const PROVIDER_URL =
-  process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
+const PROVIDER_URL = process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
-
 const UPI_ID = process.env.UPI_ID || "";
 
 const WHATSAPP_NUMBER = "918140989426";
-const WHATSAPP_LINK =
-  `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
-
+const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
 const TELEGRAM_USERNAME = "Digital_marketing_aagency_India";
 const TELEGRAM_LINK = `https://t.me/${TELEGRAM_USERNAME}`;
 
@@ -69,65 +61,63 @@ const googleClient = new OAuth2Client(
   APP_URL ? APP_URL + "/auth/google/callback" : undefined
 );
 
-async function db(sql, values = []) {
-  return pool.query(sql, values);
-}
-
-/* -------------------- HTML SAFETY -------------------- */
-
-function esc(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#39;"
-  })[char]);
+  })[c]);
 }
 
-function message(value) {
-  return `<div class="card">${esc(value)}</div>`;
+function message(v) {
+  return `<div class="card notice">${esc(v)}</div>`;
 }
 
-/* -------------------- POSTGRES SESSION STORE -------------------- */
+function money(v) {
+  return Number(v || 0).toFixed(2);
+}
+
+function cleanCategory(v) {
+  return String(v || "Other").replace(/[<>]/g, "").trim().slice(0, 120) || "Other";
+}
 
 class PostgresSessionStore extends session.Store {
-  get(sid, callback) {
-    db(
-      `SELECT sess FROM user_sessions
-       WHERE sid=$1 AND expire > NOW()`,
-      [sid]
-    ).then(result => {
-      callback(null, result.rows[0]?.sess || null);
-    }).catch(callback);
+  get(sid, cb) {
+    db("SELECT sess FROM user_sessions WHERE sid=$1 AND expire>NOW()", [sid])
+      .then(r => cb(null, r.rows[0]?.sess || null))
+      .catch(cb);
   }
 
-  set(sid, sess, callback = () => {}) {
-    const expire = sess.cookie?.expires
+  set(sid, sess, cb = () => {}) {
+    const exp = sess.cookie?.expires
       ? new Date(sess.cookie.expires)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      : new Date(Date.now() + 7 * 86400000);
 
     db(
       `INSERT INTO user_sessions(sid,sess,expire)
        VALUES($1,$2,$3)
        ON CONFLICT(sid)
        DO UPDATE SET sess=EXCLUDED.sess,expire=EXCLUDED.expire`,
-      [sid, JSON.stringify(sess), expire]
-    ).then(() => callback(null)).catch(callback);
+      [sid, JSON.stringify(sess), exp]
+    ).then(() => cb(null)).catch(cb);
   }
 
-  destroy(sid, callback = () => {}) {
-    db(`DELETE FROM user_sessions WHERE sid=$1`, [sid])
-      .then(() => callback(null)).catch(callback);
+  destroy(sid, cb = () => {}) {
+    db("DELETE FROM user_sessions WHERE sid=$1", [sid])
+      .then(() => cb(null))
+      .catch(cb);
   }
 
-  touch(sid, sess, callback = () => {}) {
-    const expire = sess.cookie?.expires
+  touch(sid, sess, cb = () => {}) {
+    const exp = sess.cookie?.expires
       ? new Date(sess.cookie.expires)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      : new Date(Date.now() + 7 * 86400000);
 
-    db(`UPDATE user_sessions SET expire=$1 WHERE sid=$2`, [expire, sid])
-      .then(() => callback(null)).catch(callback);
+    db("UPDATE user_sessions SET expire=$1 WHERE sid=$2", [exp, sid])
+      .then(() => cb(null))
+      .catch(cb);
   }
 }
 
@@ -141,15 +131,13 @@ app.use(session({
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000
+    maxAge: 7 * 86400000
   }
 }));
 
-/* -------------------- DATABASE SETUP -------------------- */
-
 async function setupDatabase() {
   await db(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS users(
       id SERIAL PRIMARY KEY,
       username VARCHAR(100) UNIQUE NOT NULL,
       email VARCHAR(200) UNIQUE,
@@ -162,38 +150,51 @@ async function setupDatabase() {
     )
   `);
 
-  await db(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200)`);
-  await db(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT`);
-  await db(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`);
-  await db(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
-  await db(`ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(14,2) DEFAULT 0`);
+  const queries = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(14,2) DEFAULT 0",
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS services (
+    `CREATE TABLE IF NOT EXISTS services(
       id SERIAL PRIMARY KEY,
       provider_id TEXT,
       provider_source TEXT DEFAULT 'socialadd',
       provider_type TEXT DEFAULT 'Default',
       name TEXT NOT NULL,
-      category TEXT DEFAULT 'Instagram',
+      category TEXT DEFAULT 'Other',
+      service_group TEXT DEFAULT 'Other',
       description TEXT DEFAULT '',
+      average_time TEXT DEFAULT '',
       rate NUMERIC(14,4) DEFAULT 0,
       provider_rate NUMERIC(14,6) DEFAULT 0,
       min INTEGER DEFAULT 100,
       max INTEGER DEFAULT 1000000,
       active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+    )`,
 
-  await db(`ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_source TEXT DEFAULT 'socialadd'`);
-  await db(`ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_type TEXT DEFAULT 'Default'`);
-  await db(`ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_rate NUMERIC(14,6) DEFAULT 0`);
-  await db(`ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`);
-  await db(`ALTER TABLE services ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`);
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_source TEXT DEFAULT 'socialadd'",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_type TEXT DEFAULT 'Default'",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_rate NUMERIC(14,6) DEFAULT 0",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS service_group TEXT DEFAULT 'Other'",
+    "ALTER TABLE services ADD COLUMN IF NOT EXISTS average_time TEXT DEFAULT ''",
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS orders (
+    `UPDATE services SET service_group=CASE
+      WHEN name ILIKE '%follower%' OR name ILIKE '%subscriber%' THEN 'Followers'
+      WHEN name ILIKE '%like%' THEN 'Likes'
+      WHEN name ILIKE '%view%' OR name ILIKE '%watch%' THEN 'Views'
+      WHEN name ILIKE '%comment%' THEN 'Comments'
+      WHEN name ILIKE '%share%' THEN 'Shares'
+      WHEN name ILIKE '%save%' THEN 'Saves'
+      ELSE COALESCE(NULLIF(service_group,''),'Other')
+    END
+    WHERE service_group IS NULL OR service_group='' OR service_group='Other'`,
+
+    `CREATE TABLE IF NOT EXISTS orders(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       service_id INTEGER,
@@ -204,98 +205,86 @@ async function setupDatabase() {
       charge NUMERIC(14,2),
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+    )`,
 
-  await db(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_name TEXT`);
-  await db(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT`);
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_name TEXT",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT",
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS payments (
+    `CREATE TABLE IF NOT EXISTS payments(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       amount NUMERIC(14,2),
       utr TEXT,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+    )`,
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS tickets (
+    `CREATE TABLE IF NOT EXISTS tickets(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       message TEXT,
       status TEXT DEFAULT 'Open',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+    )`,
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS refunds (
+    `CREATE TABLE IF NOT EXISTS refunds(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       amount NUMERIC(14,2),
       reason TEXT,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+    )`,
 
-  await db(`ALTER TABLE refunds ADD COLUMN IF NOT EXISTS funds_reserved BOOLEAN DEFAULT FALSE`);
+    "ALTER TABLE refunds ADD COLUMN IF NOT EXISTS funds_reserved BOOLEAN DEFAULT FALSE",
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS panel_settings (
+    `CREATE TABLE IF NOT EXISTS panel_settings(
       setting_key TEXT PRIMARY KEY,
       setting_value TEXT NOT NULL
-    )
-  `);
+    )`,
 
-  await db(`
-    CREATE TABLE IF NOT EXISTS user_sessions (
+    `CREATE TABLE IF NOT EXISTS user_sessions(
       sid VARCHAR(255) PRIMARY KEY,
       sess JSON NOT NULL,
       expire TIMESTAMPTZ NOT NULL
-    )
-  `);
+    )`,
 
-  await db(`CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions(expire)`);
+    "CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions(expire)",
 
-  await db(`
-    INSERT INTO panel_settings(setting_key,setting_value)
-    VALUES ('provider_enabled','true'), ('services_enabled','true')
-    ON CONFLICT (setting_key) DO NOTHING
-  `);
+    `INSERT INTO panel_settings(setting_key,setting_value)
+     VALUES('provider_enabled','true'),('services_enabled','true')
+     ON CONFLICT(setting_key) DO NOTHING`,
 
-  await db(`
-    DELETE FROM services a
-    USING services b
-    WHERE a.id > b.id
-      AND a.provider_id IS NOT NULL
-      AND a.provider_source = b.provider_source
-      AND a.provider_id = b.provider_id
-  `);
+    `DELETE FROM services a
+     USING services b
+     WHERE a.id>b.id
+       AND a.provider_id IS NOT NULL
+       AND a.provider_source=b.provider_source
+       AND a.provider_id=b.provider_id`,
 
-  await db(`
-    CREATE UNIQUE INDEX IF NOT EXISTS services_provider_unique
-    ON services(provider_source,provider_id)
-    WHERE provider_id IS NOT NULL
-  `);
+    `CREATE UNIQUE INDEX IF NOT EXISTS services_provider_unique
+     ON services(provider_source,provider_id)
+     WHERE provider_id IS NOT NULL`
+  ];
+
+  for (const q of queries) {
+    await db(q);
+  }
 
   if (ADMIN_EMAIL) {
     await db(
-      `UPDATE users SET is_admin=TRUE WHERE LOWER(email)=LOWER($1)`,
+      "UPDATE users SET is_admin=TRUE WHERE LOWER(email)=LOWER($1)",
       [ADMIN_EMAIL]
     );
   }
 
   if (ADMIN_USERNAME && ADMIN_PASSWORD) {
-    const existing = await db(
-      `SELECT id FROM users WHERE username=$1`,
+    const old = await db(
+      "SELECT id FROM users WHERE username=$1",
       [ADMIN_USERNAME]
     );
 
-    if (!existing.rows.length) {
+    if (!old.rows.length) {
       const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
 
       await db(
@@ -308,28 +297,23 @@ async function setupDatabase() {
   }
 }
 
-/* -------------------- SETTINGS -------------------- */
-
-async function setting(key) {
-  const result = await db(
-    `SELECT setting_value FROM panel_settings WHERE setting_key=$1`,
-    [key]
+async function setting(k) {
+  const r = await db(
+    "SELECT setting_value FROM panel_settings WHERE setting_key=$1",
+    [k]
   );
-
-  return result.rows[0]?.setting_value || "false";
+  return r.rows[0]?.setting_value || "false";
 }
 
-async function setSetting(key, value) {
+async function setSetting(k, v) {
   await db(
     `INSERT INTO panel_settings(setting_key,setting_value)
      VALUES($1,$2)
-     ON CONFLICT (setting_key)
+     ON CONFLICT(setting_key)
      DO UPDATE SET setting_value=EXCLUDED.setting_value`,
-    [key, String(value)]
+    [k, String(v)]
   );
 }
-
-/* -------------------- AUTHENTICATION -------------------- */
 
 function requireLogin(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
@@ -342,26 +326,26 @@ async function requireAdmin(req, res, next) {
       return res.status(403).send("Admin access required");
     }
 
-    const result = await db(
-      `SELECT is_admin FROM users WHERE id=$1`,
+    const r = await db(
+      "SELECT is_admin FROM users WHERE id=$1",
       [req.session.user.id]
     );
 
-    if (!result.rows[0]?.is_admin) {
+    if (!r.rows[0]?.is_admin) {
       req.session.user.is_admin = false;
       return res.status(403).send("Admin access required");
     }
 
     req.session.user.is_admin = true;
     next();
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 }
 
 function createUserSession(req, user, res) {
-  req.session.regenerate(error => {
-    if (error) return res.status(500).send("Session error");
+  req.session.regenerate(err => {
+    if (err) return res.status(500).send("Session error");
 
     req.session.user = {
       id: user.id,
@@ -370,275 +354,152 @@ function createUserSession(req, user, res) {
       is_admin: Boolean(user.is_admin)
     };
 
-    req.session.save(error => {
-      if (error) return res.status(500).send("Session save error");
+    req.session.save(err => {
+      if (err) return res.status(500).send("Session save error");
       res.redirect("/services");
     });
   });
 }
 
-/* -------------------- GLOBAL WHATSAPP + TELEGRAM -------------------- */
-
 function socialSupportLinks() {
   return `
-    <div class="social-float" aria-label="Contact Support">
-
+    <div class="social-float">
       <a class="social-float-btn whatsapp-float"
          href="${esc(WHATSAPP_LINK)}"
          target="_blank"
-         rel="noopener noreferrer"
-         aria-label="WhatsApp Support"
-         title="WhatsApp Support">
-
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <path fill="currentColor" d="M16 2.5A13.3 13.3 0 0 0 4.6 22.7L3 29l6.5-1.7A13.4 13.4 0 1 0 16 2.5zm0 24.2c-2 0-3.9-.5-5.6-1.5l-.4-.2-3.9 1 1-3.8-.3-.4a10.9 10.9 0 1 1 9.2 4.9zm6-8.1c-.3-.2-1.8-.9-2.1-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-1 1.2-.2.2-.4.2-.7.1-1.8-.9-3-1.6-4.2-3.6-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.6l-.9-2.2c-.2-.5-.5-.4-.7-.4h-.6c-.2 0-.6.1-.9.4-.3.3-1.1 1.1-1.1 2.6s1.1 3 1.2 3.2c.2.2 2.2 3.4 5.3 4.7 2 .9 2.8 1 3.8.8.6-.1 1.8-.7 2.1-1.4.3-.7.3-1.3.2-1.4-.1-.2-.3-.3-.6-.5z"/>
-        </svg>
-      </a>
+         rel="noopener"
+         aria-label="WhatsApp">WA</a>
 
       <a class="social-float-btn telegram-float"
          href="${esc(TELEGRAM_LINK)}"
          target="_blank"
-         rel="noopener noreferrer"
-         aria-label="Telegram Support"
-         title="Telegram Support">
-
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="currentColor" d="M21.9 4.2 18.6 20c-.2 1.1-.8 1.4-1.7.9l-4.7-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.4-4.8 8.7-7.9c.4-.4-.1-.6-.6-.2L6.7 14.1 2.1 12.7c-1-.3-1-1 .2-1.5L20.2 4.3c.8-.3 1.5.2 1.7-.1z"/>
-        </svg>
-      </a>
-
+         rel="noopener"
+         aria-label="Telegram">TG</a>
     </div>
   `;
 }
 
-/* -------------------- PAGE DESIGN -------------------- */
-
 function page(title, body, user = null) {
-  const adminMenu = user?.is_admin ? `
-    <div class="menu-section-title">ADMINISTRATION</div>
-    <a class="menu-link" href="/admin">⚙️ Admin Dashboard</a>
-    <a class="menu-link" href="/admin/services">🛠️ Manage Services</a>
-    <a class="menu-link" href="/admin/payments">💳 Fund Approvals</a>
-    <a class="menu-link" href="/admin/refunds">↩️ Refund Approvals</a>
-    <a class="menu-link" href="/admin/orders">📦 Manage Orders</a>
-    <a class="menu-link" href="/admin/users">👥 Customers</a>
-  ` : "";
+  const admin = user?.is_admin
+    ? `
+      <div class="menu-section-title">ADMINISTRATION</div>
+      <a class="menu-link" href="/admin">⚙️ Admin Dashboard</a>
+      <a class="menu-link" href="/admin/services">🛠️ Manage Services</a>
+      <a class="menu-link" href="/admin/payments">💳 Fund Approvals</a>
+      <a class="menu-link" href="/admin/refunds">↩️ Refund Approvals</a>
+      <a class="menu-link" href="/admin/orders">📦 Manage Orders</a>
+      <a class="menu-link" href="/admin/users">👥 Customers</a>
+    `
+    : "";
 
-  return `<!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="theme-color" content="#09090d">
-    <title>${esc(title)} | ROYAL PANEL</title>
-    <style>
-      *{box-sizing:border-box}
-      html{scroll-behavior:smooth}
-      body{
-        margin:0;min-height:100vh;
-        font-family:Arial,Helvetica,sans-serif;color:#fff;
-        background:radial-gradient(ellipse at top left,#35101d 0%,transparent 42%),
-        radial-gradient(ellipse at bottom right,#101d3b 0%,transparent 45%),#09090d
-      }
-      body.menu-open{overflow:hidden}
-      .top-header{
-        width:100%;min-height:82px;padding:12px 18px;
-        display:flex;align-items:center;justify-content:space-between;
-        gap:15px;background:rgba(12,12,17,.97);
-        border-bottom:1px solid #30303a;position:sticky;top:0;z-index:100
-      }
-      .brand{
-        color:#fff;font-size:29px;font-weight:900;letter-spacing:1.5px;
-        text-decoration:none;margin:0
-      }
-      .menu-button{
-        width:64px;height:58px;border:1px solid #e52b50;
-        border-radius:12px;background:#e51d43;color:white;
-        display:flex;align-items:center;justify-content:center;
-        flex-direction:column;gap:7px;cursor:pointer;padding:10px;margin:0
-      }
-      .menu-button span{display:block;width:32px;height:4px;border-radius:5px;background:white}
-      .menu-overlay{
-        position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;
-        opacity:0;visibility:hidden;transition:.25s
-      }
-      .menu-overlay.open{opacity:1;visibility:visible}
-      .side-drawer{
-        position:fixed;top:0;left:0;width:310px;max-width:86vw;
-        height:100vh;height:100dvh;overflow-y:auto;background:#101015;
-        border-right:1px solid #34343e;z-index:300;
-        transform:translateX(-105%);transition:transform .28s ease;
-        padding:0 15px 25px;box-shadow:10px 0 35px rgba(0,0,0,.4)
-      }
-      .side-drawer.open{transform:translateX(0)}
-      .drawer-header{
-        min-height:82px;display:flex;align-items:center;
-        justify-content:space-between;border-bottom:1px solid #33333c;
-        margin-bottom:15px;gap:8px
-      }
-      .drawer-brand{font-size:23px;font-weight:900;letter-spacing:1px;color:white}
-      .close-menu{
-        width:42px;height:42px;padding:0;margin:0;border-radius:10px;
-        background:#292932;color:white;font-size:27px;line-height:1
-      }
-      .menu-section-title{
-        color:#888894;font-size:11px;font-weight:bold;
-        letter-spacing:1.5px;padding:17px 10px 8px
-      }
-      .menu-link{
-        display:flex;align-items:center;gap:13px;width:100%;
-        padding:14px 12px;margin:4px 0;color:#ededf2;
-        text-decoration:none;font-size:15px;font-weight:600;
-        border:1px solid transparent;border-radius:10px
-      }
-      .menu-link:hover{color:white;background:#29202a;border-color:#713044}
-      .logout-link{
-        color:#ff647c;margin-top:18px;border-top:1px solid #34343e;
-        border-radius:0;padding-top:20px
-      }
-      main{width:100%;max-width:1100px;margin:25px auto;padding:15px 15px 95px}
-      .card{
-        background:rgba(23,23,29,.96);border:1px solid #393943;
-        border-radius:15px;padding:20px;margin:13px 0;
-        box-shadow:0 8px 25px rgba(0,0,0,.15)
-      }
-      h1,h2,h3{color:white}
-      a{color:#ff526b;text-decoration:none}
-      input,select,textarea{
-        width:100%;padding:13px;margin:7px 0;border-radius:9px;
-        border:1px solid #555560;background:#09090e;color:white;font-size:15px
-      }
-      input:focus,select:focus,textarea:focus{
-        outline:none;border-color:#e51d43;box-shadow:0 0 0 2px rgba(229,29,67,.15)
-      }
-      button{
-        background:#e51d43;color:white;padding:12px 18px;border:0;
-        border-radius:9px;margin:5px;cursor:pointer;font-size:14px;font-weight:bold
-      }
-      button:hover{background:#c91638}
-      table{width:100%;border-collapse:collapse}
-      td,th{padding:11px;border-bottom:1px solid #44444e;text-align:left}
-      th{color:#ff758a;white-space:nowrap}
-      .muted{color:#bbb}
-      .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#20ad62">
+<title>${esc(title)} | ROYAL PANEL</title>
 
-      /* WhatsApp and Telegram fixed side-by-side buttons */
-      .social-float{
-        position:fixed;
-        right:18px;
-        bottom:18px;
-        z-index:9999;
-        display:flex;
-        flex-direction:row;
-        align-items:center;
-        gap:10px;
-      }
-      .social-float-btn{
-        width:54px;
-        height:54px;
-        border-radius:50%;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        color:#fff;
-        text-decoration:none;
-        box-shadow:0 5px 18px rgba(0,0,0,.45);
-        border:2px solid rgba(255,255,255,.85);
-        transition:transform .2s;
-      }
-      .social-float-btn:hover{transform:scale(1.08)}
-      .social-float-btn svg{
-        width:29px;
-        height:29px;
-        display:block;
-      }
-      .whatsapp-float{background:#25D366}
-      .telegram-float{background:#229ED9}
-
-      .search-box{margin:10px 0 15px}
-      .qr-box{text-align:center;margin:18px auto;padding:15px;background:#fff;border-radius:14px;max-width:320px}
-      .qr-box img{display:block;width:100%;max-width:260px;height:auto;margin:auto}
-      .qr-caption{color:#222;font-weight:bold;margin-top:10px}
-      .table-wrap{width:100%;overflow-x:auto}
-      .table-wrap table{min-width:650px}
-
-      @media(max-width:600px){
-        .top-header{min-height:75px;padding:10px 13px}
-        .brand{font-size:23px}
-        .menu-button{width:58px;height:53px}
-        main{margin:15px auto;padding:10px 10px 90px}
-        .card{padding:15px}
-        .social-float{right:12px;bottom:12px;gap:8px}
-        .social-float-btn{width:49px;height:49px}
-        .social-float-btn svg{width:26px;height:26px}
-      }
-    </style>
-  </head>
-  <body>
-    <header class="top-header">
-      <a class="brand" href="${user ? "/services" : "/login"}">ROYAL PANEL</a>
-      ${user ? `
-        <button type="button" class="menu-button"
-          onclick="openRoyalMenu()" aria-label="Open Menu"
-          aria-expanded="false" id="royalMenuButton">
-          <span></span><span></span><span></span>
-        </button>` : ""}
-    </header>
-
-    ${user ? `
-      <div class="menu-overlay" id="royalMenuOverlay"
-        onclick="closeRoyalMenu()"></div>
-      <aside class="side-drawer" id="royalSideDrawer">
-        <div class="drawer-header">
-          <div class="drawer-brand">ROYAL PANEL</div>
-          <button type="button" class="close-menu"
-            onclick="closeRoyalMenu()" aria-label="Close Menu">×</button>
-        </div>
-        <div class="menu-section-title">MAIN MENU</div>
-        <a class="menu-link" href="/services">➕ New Order / Services</a>
-        <a class="menu-link" href="/orders">📦 My Orders</a>
-        <a class="menu-link" href="/funds">💰 Add Funds</a>
-        <a class="menu-link" href="/refund">↩️ Refund Request</a>
-        <a class="menu-link" href="/support">🎧 Support</a>
-        ${adminMenu}
-        <a class="menu-link logout-link" href="/logout">🚪 Logout</a>
-      </aside>
-      <script>
-        function openRoyalMenu(){
-          const drawer=document.getElementById("royalSideDrawer");
-          const overlay=document.getElementById("royalMenuOverlay");
-          const button=document.getElementById("royalMenuButton");
-          if(!drawer||!overlay)return;
-          drawer.classList.add("open");
-          overlay.classList.add("open");
-          document.body.classList.add("menu-open");
-          if(button)button.setAttribute("aria-expanded","true");
-        }
-        function closeRoyalMenu(){
-          const drawer=document.getElementById("royalSideDrawer");
-          const overlay=document.getElementById("royalMenuOverlay");
-          const button=document.getElementById("royalMenuButton");
-          if(!drawer||!overlay)return;
-          drawer.classList.remove("open");
-          overlay.classList.remove("open");
-          document.body.classList.remove("menu-open");
-          if(button)button.setAttribute("aria-expanded","false");
-        }
-        document.addEventListener("keydown",function(event){
-          if(event.key==="Escape")closeRoyalMenu();
-        });
-      </script>
-    ` : ""}
-
-    <main>${body}</main>
-
-    ${socialSupportLinks()}
-
-  </body>
-  </html>`;
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;font-family:Arial,sans-serif;color:#183328;background:#f1fff6}
+a{color:#13894b;text-decoration:none}
+.top-header{height:68px;background:#20ad62;color:white;display:flex;align-items:center;justify-content:space-between;padding:10px 16px;position:sticky;top:0;z-index:20;box-shadow:0 2px 10px #0002}
+.brand{font-size:25px;font-weight:900;color:white;letter-spacing:1px}
+.menu-button{background:#16894b;border:1px solid #d6ffe6;color:white;border-radius:10px;padding:9px 14px;font-size:24px}
+.menu-overlay{position:fixed;inset:0;background:#0008;z-index:30;display:none}
+.menu-overlay.open{display:block}
+.side-drawer{position:fixed;z-index:31;left:0;top:0;height:100dvh;width:300px;max-width:86vw;overflow:auto;background:#20ad62;padding:15px;transform:translateX(-105%);transition:.25s;color:white}
+.side-drawer.open{transform:translateX(0)}
+.drawer-header{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #ffffff66}
+.drawer-brand{font-size:22px;font-weight:bold}
+.close-menu{font-size:25px;background:#147d45}
+.menu-section-title{font-size:11px;font-weight:bold;letter-spacing:1px;color:#d6ffe6;margin:20px 8px 8px}
+.menu-link{display:block;padding:12px;margin:4px 0;border-radius:7px;color:white;font-weight:bold}
+.menu-link:hover{background:#147d45}
+.logout-link{border-top:1px solid #ffffff66;margin-top:18px}
+main{max-width:900px;margin:22px auto;padding:0 12px 100px}
+.card{background:white;border:1px solid #d2efdd;border-radius:15px;padding:18px;margin:14px 0;box-shadow:0 5px 18px #17683b14}
+.notice{background:#f0fff5;color:#176b3d}
+h1,h2,h3{color:#147b43;margin-top:5px}
+label{display:block;font-size:14px;font-weight:bold;margin:12px 0 4px;color:#345b46}
+input,select,textarea{width:100%;padding:13px;margin:5px 0;border:1px solid #b5e6c7;border-radius:9px;background:#eaf8ff;color:#183328;font-size:15px}
+input:focus,select:focus,textarea:focus{outline:2px solid #7bd99e}
+button{background:#20ad62;color:white;padding:12px 18px;border:0;border-radius:9px;margin:5px 0;cursor:pointer;font-size:14px;font-weight:bold}
+button:hover{background:#16894b}
+.primary{width:100%;font-size:16px}
+.google-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;background:white;color:#333;border:1px solid #bbb;padding:12px;border-radius:8px;font-weight:bold}
+.google-g{font-size:22px;font-weight:900;color:#4285f4}
+.muted{color:#668071;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.table-wrap{width:100%;overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:600px}
+td,th{padding:10px;border-bottom:1px solid #d8e9df;text-align:left}
+th{color:#16894b;white-space:nowrap}
+.service-info{background:#f7fff9;border:1px solid #b8e5c7;padding:12px;border-radius:9px;white-space:pre-wrap;min-height:55px}
+.social-float{position:fixed;right:14px;bottom:14px;z-index:25;display:flex;gap:9px}
+.social-float-btn{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:13px;font-weight:bold;box-shadow:0 4px 12px #0003}
+.whatsapp-float{background:#25d366}
+.telegram-float{background:#229ed9}
+.qr-box{text-align:center;background:white;border-radius:12px;padding:12px;max-width:300px;margin:15px auto}
+.qr-box img{max-width:100%;height:auto}
+.qr-caption{color:#222;font-weight:bold}
+.price-box{font-size:22px;font-weight:bold;color:#16894b}
+.category-help{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.category-chip{border:1px solid #a9dfbb;background:#effff4;border-radius:20px;padding:6px 10px;font-size:12px;color:#147b43}
+@media(max-width:600px){
+  main{margin:12px auto;padding:0 9px 90px}
+  .card{padding:14px}
+  .brand{font-size:21px}
+  .top-header{height:62px}
+  .table-wrap table{font-size:13px}
 }
+</style>
+</head>
 
-/* -------------------- PROVIDER API -------------------- */
+<body>
+<header class="top-header">
+  <a class="brand" href="${user ? "/services" : "/login"}">ROYAL PANEL</a>
+  ${user ? `<button class="menu-button" id="menuBtn" onclick="openMenu()">☰</button>` : ""}
+</header>
+
+${user ? `
+<div class="menu-overlay" id="menuOverlay" onclick="closeMenu()"></div>
+<aside class="side-drawer" id="sideDrawer">
+  <div class="drawer-header">
+    <b class="drawer-brand">ROYAL PANEL</b>
+    <button class="close-menu" onclick="closeMenu()">×</button>
+  </div>
+  <div class="menu-section-title">MAIN MENU</div>
+  <a class="menu-link" href="/services">➕ New Order / Services</a>
+  <a class="menu-link" href="/orders">📦 My Orders</a>
+  <a class="menu-link" href="/funds">💰 Add Funds</a>
+  <a class="menu-link" href="/refund">↩️ Refund Request</a>
+  <a class="menu-link" href="/support">🎧 Support</a>
+  ${admin}
+  <a class="menu-link logout-link" href="/logout">🚪 Logout</a>
+</aside>
+
+<script>
+function openMenu(){
+  document.getElementById('sideDrawer').classList.add('open');
+  document.getElementById('menuOverlay').classList.add('open');
+}
+function closeMenu(){
+  document.getElementById('sideDrawer').classList.remove('open');
+  document.getElementById('menuOverlay').classList.remove('open');
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')closeMenu();
+});
+</script>
+` : ""}
+
+<main>${body}</main>
+${socialSupportLinks()}
+</body>
+</html>`;
+}
 
 async function providerRequest(params) {
   if (!PROVIDER_KEY) throw new Error("SocialAdd API key missing");
@@ -650,7 +511,9 @@ async function providerRequest(params) {
 
   const response = await fetch(PROVIDER_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
     body,
     signal: AbortSignal.timeout(30000)
   });
@@ -664,30 +527,70 @@ async function providerRequest(params) {
   return data;
 }
 
-function isInstagram(item) {
-  const value = `${item.name || ""} ${item.category || ""}`.toLowerCase();
-  return value.includes("instagram") || value.includes("ig ");
+function inferGroup(name, category) {
+  const s = `${name || ""} ${category || ""}`.toLowerCase();
+
+  if (/follower|subscriber/.test(s)) return "Followers";
+  if (/like|favorite/.test(s)) return "Likes";
+  if (/view|watch|impression/.test(s)) return "Views";
+  if (/comment|reply/.test(s)) return "Comments";
+  if (/share/.test(s)) return "Shares";
+  if (/save|bookmark/.test(s)) return "Saves";
+  if (/member/.test(s)) return "Members";
+  if (/vote/.test(s)) return "Votes";
+
+  return "Other";
 }
 
-/* -------------------- HOME -------------------- */
+function inferPlatform(name, category) {
+  const s = `${name || ""} ${category || ""}`.toLowerCase();
+
+  for (const p of [
+    "Instagram",
+    "YouTube",
+    "Facebook",
+    "TikTok",
+    "Telegram",
+    "Twitter",
+    "X",
+    "Spotify",
+    "Website"
+  ]) {
+    if (s.includes(p.toLowerCase())) return p;
+  }
+
+  return cleanCategory(category || "Other");
+}
 
 app.get("/", (req, res) => {
   res.redirect(req.session.user ? "/services" : "/login");
 });
 
-/* -------------------- LOGIN -------------------- */
-
 app.get("/login", (req, res) => {
   res.send(page("Login", `
     <div class="card">
-      <h2>Royal Panel Login</h2>
+      <h2>Welcome Back</h2>
+      <p class="muted">Sign in to your Royal Panel account</p>
+
       <form method="POST" action="/login">
-        <input name="email" placeholder="Email or Username" required>
+        <label>Email or Username</label>
+        <input name="email" placeholder="Enter email or username" required>
+
+        <label>Password</label>
         <input name="password" type="password" placeholder="Password" required>
-        <button>Login</button>
+
+        <button class="primary">Sign In</button>
       </form>
-      <a href="/auth/google">Continue with Google</a>
-      <p><a href="/register">Create Account</a></p>
+
+      <div style="text-align:center;margin:14px 0;color:#789">OR</div>
+
+      <a class="google-btn" href="/auth/google">
+        <span class="google-g">G</span> Sign in with Google
+      </a>
+
+      <p style="text-align:center">
+        Don't have an account? <a href="/register">Sign up</a>
+      </p>
     </div>
   `));
 });
@@ -696,39 +599,52 @@ app.post("/login", async (req, res, next) => {
   try {
     const identity = String(req.body.email || "").trim();
 
-    const result = await db(
+    const r = await db(
       `SELECT * FROM users
-       WHERE LOWER(email)=LOWER($1) OR LOWER(username)=LOWER($1)
+       WHERE LOWER(email)=LOWER($1)
+       OR LOWER(username)=LOWER($1)
        LIMIT 1`,
       [identity]
     );
 
-    const user = result.rows[0];
-    const hash = user?.password_hash || user?.password;
+    const u = r.rows[0];
+    const hash = u?.password_hash || u?.password;
 
-    if (!user || !hash || !await bcrypt.compare(String(req.body.password || ""), hash)) {
-      return res.status(401).send(page("Login", message("Invalid login details")));
+    if (!u || !hash || !await bcrypt.compare(String(req.body.password || ""), hash)) {
+      return res.status(401).send(
+        page("Login", message("Invalid login details"))
+      );
     }
 
-    createUserSession(req, user, res);
-  } catch (error) {
-    next(error);
+    createUserSession(req, u, res);
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- REGISTER -------------------- */
 
 app.get("/register", (req, res) => {
   res.send(page("Register", `
     <div class="card">
       <h2>Create Account</h2>
+
       <form method="POST" action="/register">
-        <input name="username" placeholder="Username" required maxlength="100">
-        <input name="email" type="email" placeholder="Email" required maxlength="200">
-        <input name="password" type="password" minlength="6" placeholder="Password" required>
-        <button>Continue</button>
+        <label>Username</label>
+        <input name="username" required maxlength="100">
+
+        <label>Email</label>
+        <input name="email" type="email" required maxlength="200">
+
+        <label>Password</label>
+        <input name="password" type="password" minlength="6" required>
+
+        <button class="primary">Create Account</button>
       </form>
-      <a href="/auth/google">Continue with Google</a>
+
+      <a class="google-btn" href="/auth/google">
+        <span class="google-g">G</span> Sign up with Google
+      </a>
+
+      <p>Already registered? <a href="/login">Login</a></p>
     </div>
   `));
 });
@@ -739,29 +655,37 @@ app.post("/register", async (req, res, next) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
 
-    if (!username || !email || password.length < 6 ||
-        username.length > 100 || email.length > 200) {
-      return res.status(400).send(page("Register", message("Enter valid details")));
+    if (
+      !username ||
+      !email ||
+      password.length < 6 ||
+      username.length > 100 ||
+      email.length > 200
+    ) {
+      return res.status(400).send(
+        page("Register", message("Enter valid details"))
+      );
     }
 
     const hash = await bcrypt.hash(password, 12);
 
-    const result = await db(
+    const r = await db(
       `INSERT INTO users(username,email,password_hash,password)
-       VALUES($1,$2,$3,$3) RETURNING *`,
+       VALUES($1,$2,$3,$3)
+       RETURNING *`,
       [username, email, hash]
     );
 
-    createUserSession(req, result.rows[0], res);
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(400).send(page("Register", message("Username or email already exists")));
+    createUserSession(req, r.rows[0], res);
+  } catch (e) {
+    if (e.code === "23505") {
+      return res.status(400).send(
+        page("Register", message("Username or email already exists"))
+      );
     }
-    next(error);
+    next(e);
   }
 });
-
-/* -------------------- GOOGLE LOGIN -------------------- */
 
 app.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
@@ -771,16 +695,14 @@ app.get("/auth/google", (req, res) => {
   const state = crypto.randomBytes(24).toString("hex");
   req.session.googleState = state;
 
-  req.session.save(error => {
-    if (error) return res.status(500).send("Could not start Google Login");
+  req.session.save(err => {
+    if (err) return res.status(500).send("Could not start Google Login");
 
-    const url = googleClient.generateAuthUrl({
+    res.redirect(googleClient.generateAuthUrl({
       access_type: "online",
       scope: ["openid", "email", "profile"],
       state
-    });
-
-    res.redirect(url);
+    }));
   });
 });
 
@@ -811,213 +733,365 @@ app.get("/auth/google/callback", async (req, res, next) => {
 
     const email = profile.email.toLowerCase();
 
-    let result = await db(
-      `SELECT * FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`,
+    let r = await db(
+      "SELECT * FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1",
       [email]
     );
 
-    let user = result.rows[0];
+    let user = r.rows[0];
 
     if (!user) {
       const base = (profile.name || email.split("@")[0])
-        .replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20) || "customer";
+        .replace(/[^a-zA-Z0-9_]/g, "")
+        .slice(0, 20) || "customer";
 
       const username = base + "_" + crypto.randomBytes(3).toString("hex");
 
-      result = await db(
+      r = await db(
         `INSERT INTO users(username,email,google_id)
-         VALUES($1,$2,$3) RETURNING *`,
+         VALUES($1,$2,$3)
+         RETURNING *`,
         [username, email, profile.sub]
       );
 
-      user = result.rows[0];
+      user = r.rows[0];
     } else if (!user.google_id) {
       await db(
-        `UPDATE users SET google_id=$1 WHERE id=$2`,
+        "UPDATE users SET google_id=$1 WHERE id=$2",
         [profile.sub, user.id]
       );
       user.google_id = profile.sub;
     }
 
     if (ADMIN_EMAIL && email === ADMIN_EMAIL) {
-      await db(`UPDATE users SET is_admin=TRUE WHERE id=$1`, [user.id]);
+      await db(
+        "UPDATE users SET is_admin=TRUE WHERE id=$1",
+        [user.id]
+      );
       user.is_admin = true;
     }
 
     createUserSession(req, user, res);
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- OLD DASHBOARD REDIRECT -------------------- */
 
 app.get("/dashboard", requireLogin, (req, res) => {
   res.redirect("/services");
 });
 
-/* -------------------- CUSTOMER SERVICES -------------------- */
+/* CUSTOMER ORDER PAGE */
 
 app.get("/services", requireLogin, async (req, res, next) => {
   try {
     const enabled = await setting("services_enabled");
 
-    const walletResult = await db(
-      `SELECT balance FROM users WHERE id=$1`,
+    const wallet = await db(
+      "SELECT balance FROM users WHERE id=$1",
       [req.session.user.id]
     );
 
-    const balance = Number(walletResult.rows[0]?.balance || 0);
-
     const result = await db(
-      `SELECT * FROM services
-       WHERE active=TRUE
-       AND LOWER(category) LIKE '%instagram%'
-       ORDER BY id DESC`
+      "SELECT * FROM services WHERE active=TRUE ORDER BY category,service_group,id"
     );
 
-    const rows = result.rows.map(service => `
-      <option value="${esc(service.id)}">
-        ${esc(service.name)} - ₹${Number(service.rate).toFixed(2)}
-        (Min ${esc(service.min)} / Max ${esc(service.max)})
-      </option>
-    `).join("");
+    const services = result.rows;
 
-    res.send(page("New Order", `
+    const categories = [
+      ...new Set(
+        services.map(s => s.service_group || inferGroup(s.name, s.category))
+      )
+    ].sort();
+
+    const payload = services.map(s => ({
+      id: s.id,
+      name: s.name,
+      category: s.category || "Other",
+      group: s.service_group || inferGroup(s.name, s.category),
+      description: s.description || "",
+      averageTime: s.average_time || "",
+      rate: Number(s.rate),
+      min: Number(s.min),
+      max: Number(s.max)
+    }));
+
+    const safePayload = JSON.stringify(payload).replace(/</g, "\\u003c");
+
+    const body = `
       <div class="card">
-        <div style="
-          background:#101d3b;
-          border:1px solid #e51d43;
-          border-radius:12px;
-          padding:16px;
-          margin-bottom:18px;
-        ">
-          <div style="color:#bbb;font-size:14px;">WALLET BALANCE</div>
-          <h2 style="color:#fff;margin:8px 0 0;">
-            ₹${balance.toFixed(2)}
-          </h2>
+
+        <div style="background:#20ad62;color:white;border-radius:10px;padding:14px">
+          <div style="font-size:13px">WALLET BALANCE</div>
+          <div style="font-size:25px;font-weight:bold">
+            ₹${money(wallet.rows[0]?.balance)}
+          </div>
         </div>
 
-        <h2>New Order / Instagram Services</h2>
+        <h2>New Order</h2>
 
         ${enabled === "true" ? `
-          <form method="POST" action="/order">
-            <input type="search" id="serviceSearch"
-              class="search-box"
-              placeholder="Search Instagram services..."
-              autocomplete="off">
-            <select name="service_id" id="serviceSelect" required>
-              <option value="">Select a service</option>
-              ${rows}
+          <form method="POST" action="/order" id="orderForm">
+
+            <label>Search Services</label>
+            <input
+              type="search"
+              id="serviceSearch"
+              placeholder="Search service name or ID..."
+              autocomplete="off"
+            >
+
+            <label>Category</label>
+            <select id="categorySelect" required>
+              <option value="">Select Category</option>
+              ${categories.map(c => `
+                <option value="${esc(c)}">${esc(c)}</option>
+              `).join("")}
             </select>
-            <input name="link" placeholder="Instagram Link" required maxlength="2000">
-            <input name="quantity" type="number" min="1" placeholder="Quantity" required>
-            <button>Place Order</button>
+
+            <label>Service</label>
+            <select name="service_id" id="serviceSelect" required disabled>
+              <option value="">Select Category First</option>
+            </select>
+
+            <label>Description</label>
+            <div class="service-info" id="serviceDescription">
+              Select a service to see details.
+            </div>
+
+            <label>Average Time</label>
+            <div class="service-info" id="averageTime">—</div>
+
+            <label>Link</label>
+            <input
+              name="link"
+              id="orderLink"
+              placeholder="Enter post / profile link"
+              required
+              maxlength="2000"
+            >
+
+            <label>Quantity</label>
+            <input
+              name="quantity"
+              id="quantity"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Enter quantity"
+              required
+            >
+
+            <div class="muted" id="quantityLimit">
+              Select a service to see minimum and maximum quantity.
+            </div>
+
+            <label>Charge</label>
+            <div class="service-info price-box" id="charge">₹0.00</div>
+
+            <div class="muted">
+              Price is calculated automatically from the selected service rate.
+            </div>
+
+            <button class="primary" type="submit">Submit Order</button>
           </form>
+
           <script>
-            (function(){
-              const search=document.getElementById("serviceSearch");
-              const select=document.getElementById("serviceSelect");
-              const options=Array.from(select.options);
-              search.addEventListener("input",function(){
-                const term=this.value.toLowerCase().trim();
-                options.forEach(function(option,index){
-                  if(index===0)return;
-                  option.hidden=!option.text.toLowerCase().includes(term);
-                });
-                if(select.selectedOptions[0]?.hidden)select.value="";
-              });
-            })();
+            const SERVICES = ${safePayload};
+
+            const cat = document.getElementById('categorySelect');
+            const sel = document.getElementById('serviceSelect');
+            const search = document.getElementById('serviceSearch');
+            const qty = document.getElementById('quantity');
+            const desc = document.getElementById('serviceDescription');
+            const avg = document.getElementById('averageTime');
+            const lim = document.getElementById('quantityLimit');
+            const charge = document.getElementById('charge');
+
+            let current = null;
+
+            function fillServices() {
+              const group = cat.value;
+              const term = search.value.trim().toLowerCase();
+
+              const list = SERVICES.filter(s =>
+                (!group || s.group === group) &&
+                (!term || (s.name + ' ' + s.id + ' ' + s.category)
+                  .toLowerCase().includes(term))
+              );
+
+              sel.innerHTML =
+                '<option value="">Select a service</option>' +
+                list.map(s =>
+                  '<option value="' + s.id + '">' +
+                  s.id + ' - ' + escapeText(s.name) +
+                  ' — ₹' + s.rate.toFixed(2) + '/1K</option>'
+                ).join('');
+
+              sel.disabled = !list.length;
+              current = null;
+              showInfo();
+            }
+
+            function escapeText(v) {
+              return String(v).replace(/[&<>"']/g, c => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+              }[c]));
+            }
+
+            function showInfo() {
+              const s = SERVICES.find(x => String(x.id) === sel.value);
+              current = s || null;
+
+              if (!s) {
+                desc.textContent = 'Select a service to see details.';
+                avg.textContent = '—';
+                lim.textContent =
+                  'Select a service to see minimum and maximum quantity.';
+                qty.removeAttribute('min');
+                qty.removeAttribute('max');
+                charge.textContent = '₹0.00';
+                return;
+              }
+
+              desc.textContent =
+                s.description || 'No description provided by provider.';
+
+              avg.textContent =
+                s.averageTime || 'Not provided by provider';
+
+              qty.min = s.min;
+              qty.max = s.max;
+
+              lim.textContent =
+                'Min: ' + s.min.toLocaleString() +
+                ' | Max: ' + s.max.toLocaleString();
+
+              calc();
+            }
+
+            function calc() {
+              if (!current) {
+                charge.textContent = '₹0.00';
+                return;
+              }
+
+              const n = Number(qty.value || 0);
+
+              charge.textContent =
+                '₹' + (n > 0 ? (current.rate * n / 1000) : 0).toFixed(2);
+            }
+
+            cat.addEventListener('change', fillServices);
+            search.addEventListener('input', fillServices);
+            sel.addEventListener('change', showInfo);
+            qty.addEventListener('input', calc);
+
+            fillServices();
           </script>
-        ` : "Services are temporarily disabled"}
+        ` : `
+          <p>Services are temporarily disabled.</p>
+        `}
       </div>
-    `, req.session.user));
-  } catch (error) {
-    next(error);
+    `;
+
+    res.send(page("New Order", body, req.session.user));
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- PLACE ORDER -------------------- */
 
 app.post("/order", requireLogin, async (req, res, next) => {
   const client = await pool.connect();
   let orderId = null;
-  let charge = 0;
 
   try {
     await client.query("BEGIN");
 
-    const globalEnabled = await setting("services_enabled");
-
-    if (globalEnabled !== "true") {
+    if (await setting("services_enabled") !== "true") {
       throw new Error("Services are disabled");
     }
 
-    const serviceResult = await client.query(
-      `SELECT * FROM services
-       WHERE id=$1 AND active=TRUE
-       AND LOWER(category) LIKE '%instagram%'
-       FOR UPDATE`,
+    const sr = await client.query(
+      "SELECT * FROM services WHERE id=$1 AND active=TRUE FOR UPDATE",
       [req.body.service_id]
     );
 
-    const service = serviceResult.rows[0];
+    const service = sr.rows[0];
 
     if (!service) {
-      throw new Error("Instagram service not found");
+      throw new Error("Selected service not found or disabled");
     }
 
-    if (service.provider_source === "socialadd") {
-      if (await setting("provider_enabled") !== "true") {
-        throw new Error("Provider API is disabled. Orders are temporarily unavailable.");
-      }
-
-      if (!PROVIDER_KEY || !service.provider_id) {
-        throw new Error("Provider API configuration or service ID is missing");
-      }
+    if (
+      service.provider_source === "socialadd" &&
+      (
+        await setting("provider_enabled") !== "true" ||
+        !PROVIDER_KEY ||
+        !service.provider_id
+      )
+    ) {
+      throw new Error("Provider API is disabled or service configuration is missing");
     }
 
     const quantity = Number(req.body.quantity);
     const link = String(req.body.link || "").trim();
 
-    if (!Number.isInteger(quantity) ||
-        quantity < Number(service.min) ||
-        quantity > Number(service.max) ||
-        !link || link.length > 2000) {
-      throw new Error("Invalid link or quantity");
+    if (
+      !Number.isInteger(quantity) ||
+      quantity < Number(service.min) ||
+      quantity > Number(service.max) ||
+      !link ||
+      link.length > 2000
+    ) {
+      throw new Error(
+        `Invalid link or quantity. Allowed quantity: ${service.min} to ${service.max}`
+      );
     }
 
-    charge = Math.round(Number(service.rate) * quantity / 1000 * 100) / 100;
+    const charge = Math.round(
+      Number(service.rate) * quantity / 1000 * 100
+    ) / 100;
 
     if (!Number.isFinite(charge) || charge <= 0) {
       throw new Error("Invalid service price");
     }
 
-    const userResult = await client.query(
-      `SELECT balance FROM users WHERE id=$1 FOR UPDATE`,
+    const ur = await client.query(
+      "SELECT balance FROM users WHERE id=$1 FOR UPDATE",
       [req.session.user.id]
     );
 
-    if (!userResult.rows[0] ||
-        Number(userResult.rows[0].balance) < charge) {
+    if (!ur.rows[0] || Number(ur.rows[0].balance) < charge) {
       throw new Error("Insufficient wallet balance");
     }
 
     await client.query(
-      `UPDATE users SET balance=balance-$1 WHERE id=$2`,
+      "UPDATE users SET balance=balance-$1 WHERE id=$2",
       [charge, req.session.user.id]
     );
 
-    const orderResult = await client.query(
+    const or = await client.query(
       `INSERT INTO orders(
         user_id,service_id,service_name,link,quantity,charge,status
       )
       VALUES($1,$2,$3,$4,$5,$6,'Pending')
       RETURNING id`,
-      [req.session.user.id, service.id, service.name, link, quantity, charge]
+      [
+        req.session.user.id,
+        service.id,
+        service.name,
+        link,
+        quantity,
+        charge
+      ]
     );
 
-    orderId = orderResult.rows[0].id;
+    orderId = or.rows[0].id;
 
     await client.query("COMMIT");
 
@@ -1035,110 +1109,129 @@ app.post("/order", requireLogin, async (req, res, next) => {
         }
 
         await db(
-          `UPDATE orders
-           SET provider_order_id=$1,status='Processing'
-           WHERE id=$2`,
+          "UPDATE orders SET provider_order_id=$1,status='Processing' WHERE id=$2",
           [String(data.order), orderId]
         );
-      } catch (providerError) {
-        const refundClient = await pool.connect();
+      } catch (pe) {
+        const rc = await pool.connect();
 
         try {
-          await refundClient.query("BEGIN");
+          await rc.query("BEGIN");
 
-          const lockedOrder = await refundClient.query(
-            `SELECT status,charge,user_id FROM orders WHERE id=$1 FOR UPDATE`,
+          const lock = await rc.query(
+            "SELECT status,charge,user_id FROM orders WHERE id=$1 FOR UPDATE",
             [orderId]
           );
 
-          if (lockedOrder.rows[0]?.status === "Pending") {
-            await refundClient.query(
-              `UPDATE users SET balance=balance+$1 WHERE id=$2`,
-              [lockedOrder.rows[0].charge, lockedOrder.rows[0].user_id]
+          if (lock.rows[0]?.status === "Pending") {
+            await rc.query(
+              "UPDATE users SET balance=balance+$1 WHERE id=$2",
+              [lock.rows[0].charge, lock.rows[0].user_id]
             );
 
-            await refundClient.query(
-              `UPDATE orders SET status='Provider Error - Refunded' WHERE id=$1`,
+            await rc.query(
+              "UPDATE orders SET status='Provider Error - Refunded' WHERE id=$1",
               [orderId]
             );
           }
 
-          await refundClient.query("COMMIT");
-        } catch (refundError) {
-          await refundClient.query("ROLLBACK");
-          console.error("Automatic provider refund failed:", refundError);
+          await rc.query("COMMIT");
+        } catch (re) {
+          await rc.query("ROLLBACK").catch(() => {});
+          console.error("Automatic refund failed", re);
         } finally {
-          refundClient.release();
+          rc.release();
         }
 
-        console.error("Provider order failed:", providerError.message);
+        console.error("Provider order failed", pe.message);
       }
     }
 
     res.redirect("/orders");
-  } catch (error) {
+  } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
-    res.status(400).send(page("Order", message(error.message), req.session.user));
+    res.status(400).send(
+      page("Order", message(e.message), req.session.user)
+    );
   } finally {
     client.release();
   }
 });
 
-/* -------------------- CUSTOMER ORDERS -------------------- */
-
 app.get("/orders", requireLogin, async (req, res, next) => {
   try {
-    const result = await db(
-      `SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC LIMIT 100`,
+    const r = await db(
+      "SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC LIMIT 100",
       [req.session.user.id]
     );
 
-    const rows = result.rows.map(order => `
+    const rows = r.rows.map(o => `
       <tr>
-        <td>${esc(order.id)}</td>
-        <td>${esc(order.service_name || order.service_id)}</td>
-        <td>${esc(order.quantity)}</td>
-        <td>₹${esc(order.charge)}</td>
-        <td>${esc(order.status)}</td>
+        <td>${esc(o.id)}</td>
+        <td>${esc(o.service_name || o.service_id)}</td>
+        <td>${esc(o.quantity)}</td>
+        <td>₹${money(o.charge)}</td>
+        <td>${esc(o.status)}</td>
       </tr>
     `).join("");
 
-    res.send(page("Orders", `
-      <div class="card"><h2>My Orders</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>ID</th><th>Service</th><th>Qty</th><th>Charge</th><th>Status</th></tr>
-          ${rows}
-        </table>
-      </div></div>
+    res.send(page("My Orders", `
+      <div class="card">
+        <h2>My Orders</h2>
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>Order ID</th>
+              <th>Service</th>
+              <th>Quantity</th>
+              <th>Charge</th>
+              <th>Status</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- ADD FUNDS / QR -------------------- */
+/* ADD FUNDS */
 
 app.get("/funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
-      <h2>Add Funds - Admin Approval</h2>
+      <h2>Add Funds</h2>
+
       <div class="qr-box">
-        <img src="/payment-qr.png" alt="UPI Payment QR Code"
-          onerror="this.style.display='none';document.getElementById('qrError').style.display='block';">
+        <img
+          src="/payment-qr.png"
+          alt="UPI Payment QR"
+          onerror="this.style.display='none';document.getElementById('qrError').style.display='block'"
+        >
         <div class="qr-caption">Scan QR Code to Pay</div>
       </div>
-      <p id="qrError" style="display:none;color:#ff526b;text-align:center;">
-        QR image could not be loaded. Check public/payment-qr.png
+
+      <p id="qrError" style="display:none;color:#b22">
+        QR not found. Check public/payment-qr.png
       </p>
+
       <p>UPI ID: <b>${esc(UPI_ID)}</b></p>
+
       <form method="POST" action="/funds">
-        <input name="amount" type="number" min="10" max="2000"
-          step="0.01" placeholder="Amount ₹10 - ₹2000" required>
-        <input name="utr" placeholder="UTR / Transaction ID" required maxlength="150">
-        <button>Submit Payment</button>
+        <label>Amount (₹10–₹2000)</label>
+        <input name="amount" type="number" min="10" max="2000" step="0.01" required>
+
+        <label>UTR / Transaction ID</label>
+        <input name="utr" required maxlength="150">
+
+        <button class="primary">Submit Payment</button>
       </form>
-      <p class="muted">Wallet में पैसे Admin Approval के बाद जुड़ेंगे।</p>
+
+      <p class="muted">
+        Wallet में पैसे Admin Approval के बाद जुड़ेंगे।
+      </p>
     </div>
   `, req.session.user));
 });
@@ -1148,9 +1241,16 @@ app.post("/funds", requireLogin, async (req, res, next) => {
     const amount = Number(req.body.amount);
     const utr = String(req.body.utr || "").trim();
 
-    if (!Number.isFinite(amount) || amount < 10 || amount > 2000 ||
-        !utr || utr.length > 150) {
-      return res.status(400).send("Minimum ₹10 and maximum ₹2000. Valid UTR required.");
+    if (
+      !Number.isFinite(amount) ||
+      amount < 10 ||
+      amount > 2000 ||
+      !utr ||
+      utr.length > 150
+    ) {
+      return res.status(400).send(
+        "Minimum ₹10 and maximum ₹2000. Valid UTR required."
+      );
     }
 
     await db(
@@ -1164,221 +1264,237 @@ app.post("/funds", requireLogin, async (req, res, next) => {
       message("Payment submitted. Waiting for Admin Approval."),
       req.session.user
     ));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- REFUND REQUEST -------------------- */
+/* REFUND */
 
 app.get("/refund", requireLogin, (req, res) => {
   res.send(page("Refund", `
     <div class="card">
       <h2>Refund Request</h2>
       <p class="muted">Minimum ₹10 - Maximum ₹2000</p>
+
       <form method="POST" action="/refund">
-        <input name="amount" type="number" min="10" max="2000"
-          step="0.01" placeholder="₹10 - ₹2000" required>
-        <textarea name="reason" placeholder="Refund reason" required maxlength="2000"></textarea>
-        <button>Submit Refund Request</button>
+        <label>Amount</label>
+        <input name="amount" type="number" min="10" max="2000" step="0.01" required>
+
+        <label>Reason</label>
+        <textarea name="reason" required maxlength="2000"></textarea>
+
+        <button class="primary">Submit Refund Request</button>
       </form>
     </div>
   `, req.session.user));
 });
 
 app.post("/refund", requireLogin, async (req, res, next) => {
-  const client = await pool.connect();
+  const c = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await c.query("BEGIN");
 
     const amount = Number(req.body.amount);
     const reason = String(req.body.reason || "").trim();
 
-    if (!Number.isFinite(amount) || amount < 10 || amount > 2000 ||
-        !reason || reason.length > 2000) {
+    if (
+      !Number.isFinite(amount) ||
+      amount < 10 ||
+      amount > 2000 ||
+      !reason ||
+      reason.length > 2000
+    ) {
       throw new Error("Refund must be between ₹10 and ₹2000.");
     }
 
-    const user = await client.query(
-      `SELECT balance FROM users WHERE id=$1 FOR UPDATE`,
+    const u = await c.query(
+      "SELECT balance FROM users WHERE id=$1 FOR UPDATE",
       [req.session.user.id]
     );
 
-    if (!user.rows[0] || Number(user.rows[0].balance) < amount) {
+    if (!u.rows[0] || Number(u.rows[0].balance) < amount) {
       throw new Error("Insufficient wallet balance.");
     }
 
-    await client.query(
-      `UPDATE users SET balance=balance-$1 WHERE id=$2`,
+    await c.query(
+      "UPDATE users SET balance=balance-$1 WHERE id=$2",
       [amount, req.session.user.id]
     );
 
-    await client.query(
+    await c.query(
       `INSERT INTO refunds(user_id,amount,reason,status,funds_reserved)
        VALUES($1,$2,$3,'Pending',TRUE)`,
       [req.session.user.id, amount, reason]
     );
 
-    await client.query("COMMIT");
+    await c.query("COMMIT");
 
     res.send(page(
       "Refund",
-      message("Refund request sent to Admin for approval. Requested amount is reserved."),
+      message("Refund request sent to Admin for approval."),
       req.session.user
     ));
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    res.status(400).send(page("Refund", message(error.message), req.session.user));
+  } catch (e) {
+    await c.query("ROLLBACK").catch(() => {});
+    res.status(400).send(
+      page("Refund", message(e.message), req.session.user)
+    );
   } finally {
-    client.release();
+    c.release();
   }
 });
 
-/* -------------------- SUPPORT -------------------- */
+/* SUPPORT */
 
 app.get("/support", requireLogin, (req, res) => {
   res.send(page("Support", `
     <div class="card">
       <h2>Support</h2>
+
       <form method="POST" action="/support">
-        <textarea name="message" required maxlength="3000"
-          placeholder="Write your message"></textarea>
+        <textarea
+          name="message"
+          required
+          maxlength="3000"
+          placeholder="Write your message"
+        ></textarea>
         <button>Send Message</button>
       </form>
-      <h3>Contact Us</h3>
-      <p class="muted">WhatsApp और Telegram के बटन स्क्रीन के नीचे दिखाई दे रहे हैं।</p>
+
+      <p class="muted">
+        WhatsApp और Telegram support buttons नीचे हैं।
+      </p>
     </div>
   `, req.session.user));
 });
 
 app.post("/support", requireLogin, async (req, res, next) => {
   try {
-    const text = String(req.body.message || "").trim();
+    const t = String(req.body.message || "").trim();
 
-    if (!text || text.length > 3000) {
+    if (!t || t.length > 3000) {
       return res.status(400).send("Enter a valid support message.");
     }
 
     await db(
-      `INSERT INTO tickets(user_id,message,status)
-       VALUES($1,$2,'Open')`,
-      [req.session.user.id, text]
+      "INSERT INTO tickets(user_id,message,status) VALUES($1,$2,'Open')",
+      [req.session.user.id, t]
     );
 
     res.redirect("/services");
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- ADMIN DASHBOARD -------------------- */
+/* ADMIN DASHBOARD */
 
 app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const provider = await setting("provider_enabled");
-    const servicesEnabled = await setting("services_enabled");
+    const [p, s, c] = await Promise.all([
+      setting("provider_enabled"),
+      setting("services_enabled"),
+      db(`
+        SELECT
+          (SELECT COUNT(*) FROM users) users,
+          (SELECT COUNT(*) FROM orders) orders,
+          (SELECT COUNT(*) FROM payments WHERE status='Pending') pending_payments,
+          (SELECT COUNT(*) FROM refunds WHERE status='Pending') pending_refunds
+      `)
+    ]);
 
-    const counts = await db(`
-      SELECT
-        (SELECT COUNT(*) FROM users) AS users,
-        (SELECT COUNT(*) FROM orders) AS orders,
-        (SELECT COUNT(*) FROM payments WHERE status='Pending') AS pending_payments,
-        (SELECT COUNT(*) FROM refunds WHERE status='Pending') AS pending_refunds
-    `);
+    const x = c.rows[0];
 
     res.send(page("Admin", `
       <div class="card">
-        <h2>Admin Panel</h2>
-        <p>Customers: ${esc(counts.rows[0].users)}</p>
-        <p>Orders: ${esc(counts.rows[0].orders)}</p>
-        <p>Pending Funds: ${esc(counts.rows[0].pending_payments)}</p>
-        <p>Pending Refunds: ${esc(counts.rows[0].pending_refunds)}</p>
+        <h2>Admin Dashboard</h2>
+
+        <div class="grid">
+          <div>Customers: <b>${esc(x.users)}</b></div>
+          <div>Orders: <b>${esc(x.orders)}</b></div>
+          <div>Pending Funds: <b>${esc(x.pending_payments)}</b></div>
+          <div>Pending Refunds: <b>${esc(x.pending_refunds)}</b></div>
+        </div>
       </div>
 
       <div class="card">
         <h3>SocialAdd Provider</h3>
-        <p>API: ${provider === "true" ? "Enabled" : "Disabled"}</p>
+        <p>API: ${p === "true" ? "Enabled" : "Disabled"}</p>
+
         <form method="POST" action="/admin/provider-toggle">
           <button name="value" value="true">Enable Provider API</button>
           <button name="value" value="false">Disable Provider API</button>
         </form>
+
         <form method="POST" action="/admin/import">
-          <button>Import Instagram Services</button>
+          <button>Import / Update All Provider Services</button>
         </form>
+
         <form method="POST" action="/admin/provider-test">
           <button>Test Provider API</button>
         </form>
       </div>
 
       <div class="card">
-        <h3>All Instagram Services</h3>
-        <p>Services: ${servicesEnabled === "true" ? "Enabled" : "Disabled"}</p>
+        <h3>All Services</h3>
+        <p>${s === "true" ? "Enabled" : "Disabled"}</p>
+
         <form method="POST" action="/admin/services-toggle">
           <button name="value" value="true">Enable All Services</button>
           <button name="value" value="false">Disable All Services</button>
         </form>
-      </div>
 
-      <div class="card">
         <a href="/admin/services">Manage Services</a> |
-        <a href="/admin/payments">Fund Approvals</a> |
-        <a href="/admin/refunds">Refund Approvals</a> |
-        <a href="/admin/orders">Manage Orders</a> |
-        <a href="/admin/users">Customers</a>
+        <a href="/admin/payments">Payments</a> |
+        <a href="/admin/refunds">Refunds</a> |
+        <a href="/admin/orders">Orders</a> |
+        <a href="/admin/users">Users</a>
       </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- PROVIDER TOGGLE -------------------- */
 
 app.post("/admin/provider-toggle", requireLogin, requireAdmin, async (req, res, next) => {
   try {
     await setSetting("provider_enabled", req.body.value === "true");
     res.redirect("/admin");
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- GLOBAL SERVICES TOGGLE -------------------- */
 
 app.post("/admin/services-toggle", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const enabled = req.body.value === "true";
-
-    await setSetting("services_enabled", enabled);
-
+    await setSetting("services_enabled", req.body.value === "true");
     res.redirect("/admin");
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
-
-/* -------------------- PROVIDER TEST -------------------- */
 
 app.post("/admin/provider-test", requireLogin, requireAdmin, async (req, res) => {
   try {
-    const data = await providerRequest({ action: "balance" });
+    const d = await providerRequest({ action: "balance" });
 
     res.send(page(
       "Provider Test",
-      message("SocialAdd API connected: " + JSON.stringify(data)),
+      message("SocialAdd API connected: " + JSON.stringify(d)),
       req.session.user
     ));
-  } catch (error) {
+  } catch (e) {
     res.status(500).send(page(
       "Provider Test",
-      message("Provider Error: " + error.message),
+      message("Provider Error: " + e.message),
       req.session.user
     ));
   }
 });
 
-/* -------------------- IMPORT INSTAGRAM SERVICES -------------------- */
+/* IMPORT ALL PROVIDER SERVICES */
 
 app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   try {
@@ -1395,92 +1511,130 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
     let imported = 0;
 
     for (const item of list) {
-      if (!isInstagram(item)) continue;
-
       const providerId = String(item.service || "").trim();
+      const name = String(item.name || "Social Media Service");
+      const rawCategory = String(item.category || inferPlatform(name, item.category));
+      const group = inferGroup(name, rawCategory);
+      const platform = inferPlatform(name, rawCategory);
       const providerRate = Number(item.rate || 0);
-      const min = Number(item.min || 100);
+      const min = Number(item.min || 1);
       const max = Number(item.max || 1000000);
 
-      if (!providerId ||
-          !Number.isFinite(providerRate) ||
-          providerRate < 0 ||
-          !Number.isInteger(min) ||
-          !Number.isInteger(max) ||
-          min < 1 || max < min) {
+      if (
+        !providerId ||
+        !Number.isFinite(providerRate) ||
+        providerRate < 0 ||
+        !Number.isInteger(min) ||
+        !Number.isInteger(max) ||
+        min < 1 ||
+        max < min
+      ) {
         continue;
       }
 
       const sellingRate = providerRate * 1.75;
 
-      await db(`
-        INSERT INTO services(
-          provider_id,provider_source,provider_type,name,category,
-          description,rate,provider_rate,min,max,active
+      const average = String(
+        item.average_time ||
+        item.avg_time ||
+        item.averageTime ||
+        item.time ||
+        ""
+      ).slice(0, 200);
+
+      await db(
+        `INSERT INTO services(
+          provider_id,
+          provider_source,
+          provider_type,
+          name,
+          category,
+          service_group,
+          description,
+          average_time,
+          rate,
+          provider_rate,
+          min,
+          max,
+          active
         )
-        VALUES($1,'socialadd','Default',$2,'Instagram',$3,$4,$5,$6,$7,TRUE)
+        VALUES(
+          $1,'socialadd','Default',$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE
+        )
         ON CONFLICT(provider_source,provider_id)
         WHERE provider_id IS NOT NULL
         DO UPDATE SET
           name=EXCLUDED.name,
-          category='Instagram',
+          category=EXCLUDED.category,
+          service_group=EXCLUDED.service_group,
           description=EXCLUDED.description,
+          average_time=EXCLUDED.average_time,
           provider_rate=EXCLUDED.provider_rate,
-          rate=EXCLUDED.rate,
           min=EXCLUDED.min,
-          max=EXCLUDED.max
-      `, [
-        providerId,
-        String(item.name || "Instagram Service"),
-        String(item.description || ""),
-        sellingRate,
-        providerRate,
-        min,
-        max
-      ]);
+          max=EXCLUDED.max`,
+        [
+          providerId,
+          name,
+          platform,
+          group,
+          String(item.description || ""),
+          average,
+          sellingRate,
+          providerRate,
+          min,
+          max
+        ]
+      );
 
       imported++;
     }
 
     res.send(page(
       "Import",
-      message(`Instagram services imported or updated: ${imported}`),
+      message(`Services imported or updated: ${imported}`),
       req.session.user
     ));
-  } catch (error) {
+  } catch (e) {
     res.status(500).send(page(
       "Import Error",
-      message(error.message),
+      message(e.message),
       req.session.user
     ));
   }
 });
 
-/* -------------------- MANAGE SERVICES -------------------- */
+/* MANAGE SERVICES */
 
 app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const result = await db(
-      `SELECT * FROM services
-       WHERE LOWER(category) LIKE '%instagram%'
-       ORDER BY id DESC`
+    const r = await db(
+      "SELECT * FROM services ORDER BY id DESC LIMIT 1000"
     );
 
-    const rows = result.rows.map(service => `
-      <tr class="admin-service-row">
-        <td>${esc(service.id)}</td>
-        <td>${esc(service.name)}</td>
-        <td>₹${esc(service.provider_rate)}</td>
-        <td>₹${esc(service.rate)}</td>
-        <td>${service.active ? "Active" : "Disabled"}</td>
+    const rows = r.rows.map(s => `
+      <tr>
+        <td>${esc(s.id)}</td>
+        <td>${esc(s.category)}</td>
+        <td>${esc(s.service_group)}</td>
+        <td>${esc(s.name)}</td>
+        <td>${esc(s.min)}–${esc(s.max)}</td>
+        <td>${esc(s.average_time || "—")}</td>
+        <td>₹${money(s.rate)}</td>
+        <td>${s.active ? "Active" : "Disabled"}</td>
         <td>
-          <form method="POST" action="/admin/service/${esc(service.id)}">
-            <input name="rate" type="number" step="0.0001"
-              value="${esc(service.rate)}" required>
-            <button name="active" value="${!service.active}">
-              ${service.active ? "Disable" : "Enable"}
-            </button>
+          <form method="POST" action="/admin/service/${esc(s.id)}">
+            <input
+              name="rate"
+              type="number"
+              step="0.0001"
+              min="0"
+              value="${esc(s.rate)}"
+              required
+            >
             <button name="save" value="1">Save Price</button>
+            <button name="active" value="${!s.active}">
+              ${s.active ? "Disable" : "Enable"}
+            </button>
           </form>
         </td>
       </tr>
@@ -1488,36 +1642,48 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) =>
 
     res.send(page("Manage Services", `
       <div class="card">
-        <h2>Instagram Services</h2>
-        <input type="search" id="adminServiceSearch"
-          class="search-box"
-          placeholder="Search services by name, ID or status..."
-          autocomplete="off">
+        <h2>Manage All Services</h2>
+
+        <input
+          id="adminSearch"
+          placeholder="Search by ID, category or service"
+        >
+
         <div class="table-wrap">
-          <table id="adminServicesTable">
-            <thead><tr>
-              <th>ID</th><th>Name</th><th>Provider Rate</th>
-              <th>Selling Rate</th><th>Status</th><th>Manage</th>
-            </tr></thead>
-            <tbody>${rows}</tbody>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Platform</th>
+                <th>Group</th>
+                <th>Name</th>
+                <th>Limits</th>
+                <th>Average Time</th>
+                <th>Rate / 1K</th>
+                <th>Status</th>
+                <th>Update</th>
+              </tr>
+            </thead>
+            <tbody id="serviceRows">${rows}</tbody>
           </table>
         </div>
       </div>
+
       <script>
-        (function(){
-          const search=document.getElementById("adminServiceSearch");
-          const tableRows=document.querySelectorAll(".admin-service-row");
-          search.addEventListener("input",function(){
-            const term=this.value.toLowerCase().trim();
-            tableRows.forEach(function(row){
-              row.style.display=row.textContent.toLowerCase().includes(term)?"":"none";
-            });
+        const q = document.getElementById('adminSearch');
+
+        q.addEventListener('input', () => {
+          document.querySelectorAll('#serviceRows tr').forEach(r => {
+            r.style.display =
+              r.textContent.toLowerCase().includes(q.value.toLowerCase())
+                ? ''
+                : 'none';
           });
-        })();
+        });
       </script>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
@@ -1537,292 +1703,332 @@ app.post("/admin/service/:id", requireLogin, requireAdmin, async (req, res, next
       }
 
       await db(
-        `UPDATE services SET rate=$1
-         WHERE id=$2 AND LOWER(category) LIKE '%instagram%'`,
+        "UPDATE services SET rate=$1 WHERE id=$2",
         [rate, id]
       );
     } else {
       await db(
-        `UPDATE services SET active=$1
-         WHERE id=$2 AND LOWER(category) LIKE '%instagram%'`,
+        "UPDATE services SET active=$1 WHERE id=$2",
         [req.body.active === "true", id]
       );
     }
 
     res.redirect("/admin/services");
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- ADMIN PAYMENTS -------------------- */
+/* ADMIN PAYMENTS */
 
 app.get("/admin/payments", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const result = await db(`
-      SELECT p.*,u.username,u.email FROM payments p
+    const r = await db(`
+      SELECT p.*,u.username,u.email
+      FROM payments p
       JOIN users u ON u.id=p.user_id
-      ORDER BY p.id DESC LIMIT 200
+      ORDER BY p.id DESC
+      LIMIT 200
     `);
 
-    const rows = result.rows.map(payment => `
+    const rows = r.rows.map(p => `
       <tr>
-        <td>${esc(payment.id)}</td>
-        <td>${esc(payment.username)}</td>
-        <td>₹${esc(payment.amount)}</td>
-        <td>${esc(payment.utr)}</td>
-        <td>${esc(payment.status)}</td>
-        <td>${payment.status === "Pending" ? `
-          <form method="POST" action="/admin/payment/${esc(payment.id)}">
-            <button name="action" value="approve">Approve</button>
-            <button name="action" value="reject">Reject</button>
-          </form>` : ""}
+        <td>${esc(p.id)}</td>
+        <td>${esc(p.username)}</td>
+        <td>₹${money(p.amount)}</td>
+        <td>${esc(p.utr)}</td>
+        <td>${esc(p.status)}</td>
+        <td>
+          ${p.status === "Pending" ? `
+            <form method="POST" action="/admin/payment/${esc(p.id)}">
+              <button name="action" value="approve">Approve</button>
+              <button name="action" value="reject">Reject</button>
+            </form>
+          ` : ""}
         </td>
       </tr>
     `).join("");
 
     res.send(page("Payments", `
-      <div class="card"><h2>Fund Approval</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>ID</th><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
-          ${rows}
-        </table>
-      </div></div>
+      <div class="card">
+        <h2>Fund Approvals</h2>
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>User</th>
+              <th>Amount</th>
+              <th>UTR</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
 app.post("/admin/payment/:id", requireLogin, requireAdmin, async (req, res, next) => {
-  const client = await pool.connect();
+  const c = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await c.query("BEGIN");
 
-    const result = await client.query(
-      `SELECT * FROM payments WHERE id=$1 FOR UPDATE`,
+    const r = await c.query(
+      "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
       [req.params.id]
     );
 
-    const payment = result.rows[0];
+    const p = r.rows[0];
 
-    if (!payment || payment.status !== "Pending") {
+    if (!p || p.status !== "Pending") {
       throw new Error("Payment already processed");
     }
 
     if (req.body.action === "approve") {
-      await client.query(
-        `UPDATE users SET balance=balance+$1 WHERE id=$2`,
-        [payment.amount, payment.user_id]
+      await c.query(
+        "UPDATE users SET balance=balance+$1 WHERE id=$2",
+        [p.amount, p.user_id]
       );
 
-      await client.query(
-        `UPDATE payments SET status='Approved' WHERE id=$1`,
-        [payment.id]
+      await c.query(
+        "UPDATE payments SET status='Approved' WHERE id=$1",
+        [p.id]
       );
     } else if (req.body.action === "reject") {
-      await client.query(
-        `UPDATE payments SET status='Rejected' WHERE id=$1`,
-        [payment.id]
+      await c.query(
+        "UPDATE payments SET status='Rejected' WHERE id=$1",
+        [p.id]
       );
     } else {
       throw new Error("Invalid payment action");
     }
 
-    await client.query("COMMIT");
+    await c.query("COMMIT");
     res.redirect("/admin/payments");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    res.status(400).send(esc(error.message));
+  } catch (e) {
+    await c.query("ROLLBACK").catch(() => {});
+    res.status(400).send(esc(e.message));
   } finally {
-    client.release();
+    c.release();
   }
 });
 
-/* -------------------- ADMIN REFUNDS -------------------- */
+/* ADMIN REFUNDS */
 
 app.get("/admin/refunds", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const result = await db(`
-      SELECT f.*,u.username FROM refunds f
+    const r = await db(`
+      SELECT f.*,u.username
+      FROM refunds f
       JOIN users u ON u.id=f.user_id
       ORDER BY f.id DESC
     `);
 
-    const rows = result.rows.map(refund => `
+    const rows = r.rows.map(f => `
       <tr>
-        <td>${esc(refund.id)}</td>
-        <td>${esc(refund.username)}</td>
-        <td>₹${esc(refund.amount)}</td>
-        <td>${esc(refund.reason)}</td>
-        <td>${esc(refund.status)}</td>
-        <td>${refund.status === "Pending" ? `
-          <form method="POST" action="/admin/refund/${esc(refund.id)}">
-            <button name="action" value="approve">Approve</button>
-            <button name="action" value="reject">Reject</button>
-          </form>` : ""}
+        <td>${esc(f.id)}</td>
+        <td>${esc(f.username)}</td>
+        <td>₹${money(f.amount)}</td>
+        <td>${esc(f.reason)}</td>
+        <td>${esc(f.status)}</td>
+        <td>
+          ${f.status === "Pending" ? `
+            <form method="POST" action="/admin/refund/${esc(f.id)}">
+              <button name="action" value="approve">Approve</button>
+              <button name="action" value="reject">Reject</button>
+            </form>
+          ` : ""}
         </td>
       </tr>
     `).join("");
 
     res.send(page("Refunds", `
-      <div class="card"><h2>Refund Requests</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>ID</th><th>User</th><th>Amount</th><th>Reason</th><th>Status</th><th>Action</th></tr>
-          ${rows}
-        </table>
-      </div></div>
+      <div class="card">
+        <h2>Refund Requests</h2>
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>User</th>
+              <th>Amount</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
 app.post("/admin/refund/:id", requireLogin, requireAdmin, async (req, res, next) => {
-  const client = await pool.connect();
+  const c = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await c.query("BEGIN");
 
-    const result = await client.query(
-      `SELECT * FROM refunds WHERE id=$1 FOR UPDATE`,
+    const r = await c.query(
+      "SELECT * FROM refunds WHERE id=$1 FOR UPDATE",
       [req.params.id]
     );
 
-    const refund = result.rows[0];
+    const f = r.rows[0];
 
-    if (!refund || refund.status !== "Pending") {
+    if (!f || f.status !== "Pending") {
       throw new Error("Refund already processed");
     }
 
     if (req.body.action === "approve") {
-      if (!refund.funds_reserved) {
-        const user = await client.query(
-          `SELECT balance FROM users WHERE id=$1 FOR UPDATE`,
-          [refund.user_id]
+      if (!f.funds_reserved) {
+        const u = await c.query(
+          "SELECT balance FROM users WHERE id=$1 FOR UPDATE",
+          [f.user_id]
         );
 
-        if (Number(user.rows[0]?.balance || 0) < Number(refund.amount)) {
-          throw new Error("Customer wallet balance is insufficient");
+        if (Number(u.rows[0]?.balance || 0) < Number(f.amount)) {
+          throw new Error("Insufficient wallet balance");
         }
 
-        await client.query(
-          `UPDATE users SET balance=balance-$1 WHERE id=$2`,
-          [refund.amount, refund.user_id]
+        await c.query(
+          "UPDATE users SET balance=balance-$1 WHERE id=$2",
+          [f.amount, f.user_id]
         );
       }
 
-      await client.query(
-        `UPDATE refunds SET status='Approved' WHERE id=$1`,
-        [refund.id]
+      await c.query(
+        "UPDATE refunds SET status='Approved' WHERE id=$1",
+        [f.id]
       );
     } else if (req.body.action === "reject") {
-      if (refund.funds_reserved) {
-        await client.query(
-          `UPDATE users SET balance=balance+$1 WHERE id=$2`,
-          [refund.amount, refund.user_id]
+      if (f.funds_reserved) {
+        await c.query(
+          "UPDATE users SET balance=balance+$1 WHERE id=$2",
+          [f.amount, f.user_id]
         );
       }
 
-      await client.query(
-        `UPDATE refunds SET status='Rejected' WHERE id=$1`,
-        [refund.id]
+      await c.query(
+        "UPDATE refunds SET status='Rejected' WHERE id=$1",
+        [f.id]
       );
     } else {
       throw new Error("Invalid refund action");
     }
 
-    await client.query("COMMIT");
+    await c.query("COMMIT");
     res.redirect("/admin/refunds");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    res.status(400).send(esc(error.message));
+  } catch (e) {
+    await c.query("ROLLBACK").catch(() => {});
+    res.status(400).send(esc(e.message));
   } finally {
-    client.release();
+    c.release();
   }
 });
 
-/* -------------------- ADMIN USERS -------------------- */
+/* ADMIN USERS */
 
 app.get("/admin/users", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const result = await db(
-      `SELECT id,username,email,balance,is_admin,created_at
-       FROM users ORDER BY id DESC LIMIT 200`
-    );
+    const r = await db(`
+      SELECT id,username,email,balance,is_admin,created_at
+      FROM users
+      ORDER BY id DESC
+      LIMIT 200
+    `);
 
-    const rows = result.rows.map(user => `
+    const rows = r.rows.map(u => `
       <tr>
-        <td>${esc(user.id)}</td>
-        <td>${esc(user.username)}</td>
-        <td>${esc(user.email || "")}</td>
-        <td>₹${esc(user.balance)}</td>
-        <td>${user.is_admin ? "Admin" : "Customer"}</td>
+        <td>${esc(u.id)}</td>
+        <td>${esc(u.username)}</td>
+        <td>${esc(u.email || "")}</td>
+        <td>₹${money(u.balance)}</td>
+        <td>${u.is_admin ? "Admin" : "Customer"}</td>
       </tr>
     `).join("");
 
     res.send(page("Customers", `
-      <div class="card"><h2>Customers</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>ID</th><th>Username</th><th>Email</th><th>Balance</th><th>Role</th></tr>
-          ${rows}
-        </table>
-      </div></div>
+      <div class="card">
+        <h2>Customers</h2>
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Balance</th>
+              <th>Role</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- ADMIN ORDERS -------------------- */
+/* ADMIN ORDERS */
 
 app.get("/admin/orders", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const result = await db(`
-      SELECT o.*,u.username FROM orders o
+    const r = await db(`
+      SELECT o.*,u.username
+      FROM orders o
       JOIN users u ON u.id=o.user_id
-      ORDER BY o.id DESC LIMIT 200
+      ORDER BY o.id DESC
+      LIMIT 200
     `);
 
-    const rows = result.rows.map(order => `
+    const rows = r.rows.map(o => `
       <tr>
-        <td>${esc(order.id)}</td>
-        <td>${esc(order.username)}</td>
-        <td>${esc(order.service_name || order.service_id)}</td>
-        <td>${esc(order.quantity)}</td>
-        <td>${esc(order.status)}</td>
-        <td>${esc(order.provider_order_id || "")}</td>
+        <td>${esc(o.id)}</td>
+        <td>${esc(o.username)}</td>
+        <td>${esc(o.service_name || o.service_id)}</td>
+        <td>${esc(o.quantity)}</td>
+        <td>${esc(o.status)}</td>
+        <td>${esc(o.provider_order_id || "")}</td>
       </tr>
     `).join("");
 
     res.send(page("Orders", `
-      <div class="card"><h2>All Orders</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Status</th><th>Provider ID</th></tr>
-          ${rows}
-        </table>
-      </div></div>
+      <div class="card">
+        <h2>All Orders</h2>
+        <div class="table-wrap">
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>User</th>
+              <th>Service</th>
+              <th>Qty</th>
+              <th>Status</th>
+              <th>Provider ID</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      </div>
     `, req.session.user));
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 });
 
-/* -------------------- LOGOUT -------------------- */
-
 app.get("/logout", (req, res) => {
-  req.session.destroy(error => {
+  req.session.destroy(() => {
     res.clearCookie("royal.sid");
     res.redirect("/login");
   });
 });
-
-/* -------------------- HEALTH CHECK -------------------- */
 
 app.get("/health", (req, res) => {
   res.json({
@@ -1831,15 +2037,13 @@ app.get("/health", (req, res) => {
   });
 });
 
-/* -------------------- ERROR HANDLER -------------------- */
-
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
+
   if (res.headersSent) return next(err);
+
   res.status(500).send("Server error. Please try again later.");
 });
-
-/* -------------------- START SERVER -------------------- */
 
 const PORT = process.env.PORT || 3000;
 
@@ -1849,7 +2053,7 @@ setupDatabase()
       console.log("ROYAL PANEL running on port " + PORT);
     });
   })
-  .catch(error => {
-    console.error("Database setup failed:", error);
+  .catch(e => {
+    console.error("Database setup failed:", e);
     process.exit(1);
   });
