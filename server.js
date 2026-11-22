@@ -9,6 +9,7 @@ const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
+const path = require("path");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -16,6 +17,9 @@ app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Public folder: payment QR image and other public files
+app.use(express.static(path.join(__dirname, "public")));
 
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -43,6 +47,7 @@ const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
 
 const UPI_ID = process.env.UPI_ID || "";
 const WHATSAPP = process.env.SUPPORT_WHATSAPP || "";
+const WHATSAPP_NUMBER = WHATSAPP.replace(/\D/g, "");
 const TELEGRAM_URL = process.env.TELEGRAM_URL || "";
 
 const googleClient = new OAuth2Client(
@@ -231,6 +236,35 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function socialSupportLinks() {
+  return `
+    <div class="social-links">
+      ${WHATSAPP_NUMBER ? `
+        <a class="social-link whatsapp-link"
+           href="https://wa.me/${WHATSAPP_NUMBER}"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="social-icon" viewBox="0 0 24 24"
+               xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="currentColor"
+              d="M20.52 3.48A11.8 11.8 0 0 0 12.13 0C5.55 0 .2 5.35.2 11.93c0 2.1.55 4.15 1.6 5.96L.1 24l6.27-1.64a11.9 11.9 0 0 0 5.76 1.47h.01c6.58 0 11.93-5.35 11.93-11.93a11.85 11.85 0 0 0-3.55-8.42ZM12.14 21.8a9.9 9.9 0 0 1-5.04-1.38l-.36-.21-3.72.98.99-3.63-.24-.37a9.86 9.86 0 0 1-1.52-5.26c0-5.46 4.45-9.91 9.91-9.91a9.84 9.84 0 0 1 7.01 2.91 9.84 9.84 0 0 1 2.9 7.01c0 5.46-4.45 9.91-9.92 9.91Zm5.44-7.42c-.3-.15-1.77-.87-2.04-.97-.28-.1-.48-.15-.68.15-.2.3-.78.97-.95 1.17-.18.2-.35.23-.65.08-.3-.15-1.26-.46-2.4-1.47-.88-.78-1.47-1.74-1.64-2.04-.17-.3-.02-.46.13-.61.14-.13.3-.35.45-.53.15-.18.2-.3.3-.5.1-.2.05-.38-.03-.53-.08-.15-.68-1.64-.93-2.25-.24-.59-.49-.51-.68-.52h-.58c-.2 0-.53.08-.8.38-.28.3-1.05 1.02-1.05 2.5s1.08 2.9 1.23 3.1c.15.2 2.12 3.24 5.14 4.55.72.31 1.28.5 1.72.64.72.23 1.38.2 1.9.12.58-.09 1.77-.72 2.02-1.42.25-.69.25-1.29.18-1.42-.08-.13-.28-.2-.58-.35Z"/>
+          </svg>
+          WhatsApp Support
+        </a>` : ""}
+      ${TELEGRAM_URL ? `
+        <a class="social-link telegram-link"
+           href="${TELEGRAM_URL}"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="social-icon" viewBox="0 0 24 24"
+               xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="currentColor"
+              d="M21.9 4.2 18.6 20c-.25 1.12-.9 1.4-1.82.88l-5.04-3.72-2.43 2.34c-.27.27-.5.5-1.02.5l.36-5.13 9.34-8.44c.4-.36-.09-.56-.62-.2L5.82 13.5.85 11.95c-1.08-.34-1.1-1.08.22-1.6L20.5 2.8c.9-.33 1.7.22 1.4 1.4Z"/>
+          </svg>
+          Telegram Support
+        </a>` : ""}
+    </div>
+  `;
+}
+
 function page(title, body, user = null) {
   return `<!DOCTYPE html>
   <html>
@@ -258,8 +292,23 @@ function page(title, body, user = null) {
       border:0;border-radius:8px;margin:5px;cursor:pointer}
       table{width:100%;border-collapse:collapse;overflow:auto}
       td,th{padding:9px;border-bottom:1px solid #444;text-align:left}
-      .muted{color:#bbb}.grid{display:grid;
-      grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+      .muted{color:#bbb}
+      .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+      .social-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+      .social-link{display:inline-flex;align-items:center;gap:9px;
+        padding:11px 15px;border-radius:10px;color:white;
+        font-weight:bold;margin:0}
+      .whatsapp-link{background:#128c4a}
+      .telegram-link{background:#168acb}
+      .social-icon{width:23px;height:23px;display:inline-block;flex-shrink:0}
+      .search-box{margin:10px 0 15px}
+      .qr-box{text-align:center;margin:18px auto;padding:15px;
+        background:#fff;border-radius:14px;max-width:320px}
+      .qr-box img{display:block;width:100%;max-width:260px;
+        height:auto;margin:auto}
+      .qr-caption{color:#222;font-weight:bold;margin-top:10px}
+      .table-wrap{width:100%;overflow-x:auto}
+      .table-wrap table{min-width:650px}
     </style>
   </head>
   <body>
@@ -310,9 +359,7 @@ async function providerRequest(params) {
 
 function isInstagram(item) {
   const value = `${item.name || ""} ${item.category || ""}`.toLowerCase();
-  return value.includes("instagram") ||
-    value.includes("instagram") ||
-    value.includes("ig ");
+  return value.includes("instagram") || value.includes("ig ");
 }
 
 app.get("/", (req, res) => {
@@ -505,12 +552,13 @@ app.get("/dashboard", requireLogin, async (req, res) => {
       <div class="card"><a href="/support">Support</a></div>
     </div>
     <div class="card">
-      <a href="https://wa.me/${WHATSAPP}">WhatsApp Support</a>
-      <a href="${TELEGRAM_URL}">Telegram Support</a>
+      <h3>Contact Support</h3>
+      ${socialSupportLinks()}
     </div>
   `, req.session.user));
 });
 
+// Customer Instagram services with live search
 app.get("/services", requireLogin, async (req, res) => {
   const enabled = await setting("services_enabled");
   const r = await db(
@@ -530,11 +578,42 @@ app.get("/services", requireLogin, async (req, res) => {
       <h2>Instagram Services</h2>
       ${enabled === "true" ? `
         <form method="POST" action="/order">
-          <select name="service_id" required>${rows}</select>
+          <input
+            type="search"
+            id="serviceSearch"
+            class="search-box"
+            placeholder="Search Instagram services..."
+            autocomplete="off"
+          >
+          <select name="service_id" id="serviceSelect" required>
+            <option value="">Select a service</option>
+            ${rows}
+          </select>
           <input name="link" placeholder="Instagram Link" required>
           <input name="quantity" type="number" min="1" placeholder="Quantity" required>
           <button>Place Order</button>
-        </form>` : "Services are temporarily disabled"}
+        </form>
+        <script>
+          (function(){
+            const search = document.getElementById("serviceSearch");
+            const select = document.getElementById("serviceSelect");
+            const options = Array.from(select.options);
+
+            search.addEventListener("input", function(){
+              const term = this.value.toLowerCase().trim();
+
+              options.forEach(function(option, index){
+                if(index === 0) return;
+                option.hidden = !option.text.toLowerCase().includes(term);
+              });
+
+              if(select.selectedOptions[0]?.hidden){
+                select.value = "";
+              }
+            });
+          })();
+        </script>
+      ` : "Services are temporarily disabled"}
     </div>
   `, req.session.user));
 });
@@ -647,16 +726,34 @@ app.get("/orders", requireLogin, async (req, res) => {
 
   res.send(page("Orders", `
     <div class="card"><h2>My Orders</h2>
-    <table><tr><th>ID</th><th>Service</th><th>Qty</th><th>Charge</th><th>Status</th></tr>
-    ${rows}</table></div>
+    <div class="table-wrap">
+      <table><tr><th>ID</th><th>Service</th><th>Qty</th><th>Charge</th><th>Status</th></tr>
+      ${rows}</table>
+    </div></div>
   `, req.session.user));
 });
 
+// Add Funds with uploaded public/payment-qr.png
 app.get("/funds", requireLogin, (req, res) => {
   res.send(page("Add Funds", `
     <div class="card">
       <h2>Add Funds - Admin Approval</h2>
-      <p>UPI ID: ${UPI_ID}</p>
+
+      <div class="qr-box">
+        <img
+          src="/payment-qr.png"
+          alt="UPI Payment QR Code"
+          onerror="this.style.display='none';document.getElementById('qrError').style.display='block';"
+        >
+        <div class="qr-caption">Scan QR Code to Pay</div>
+      </div>
+
+      <p id="qrError" style="display:none;color:#ff526b;text-align:center;">
+        QR image could not be loaded. Check public/payment-qr.png
+      </p>
+
+      <p>UPI ID: <b>${UPI_ID}</b></p>
+
       <form method="POST" action="/funds">
         <input name="amount" type="number" min="10" max="2000"
         step="0.01" placeholder="Amount ₹10 - ₹2000" required>
@@ -730,8 +827,8 @@ app.get("/support", requireLogin, (req, res) => {
         <textarea name="message" required placeholder="Write your message"></textarea>
         <button>Send Message</button>
       </form>
-      <p><a href="https://wa.me/${WHATSAPP}">WhatsApp</a></p>
-      <p><a href="${TELEGRAM_URL}">Telegram</a></p>
+      <h3>Contact Us</h3>
+      ${socialSupportLinks()}
     </div>
   `, req.session.user));
 });
@@ -899,6 +996,7 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   }
 });
 
+// Admin services page with search
 app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
   const r = await db(
     `SELECT * FROM services
@@ -906,7 +1004,7 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
   );
 
   const rows = r.rows.map(s => `
-    <tr>
+    <tr class="admin-service-row">
       <td>${s.id}</td>
       <td>${s.name}</td>
       <td>₹${s.provider_rate}</td>
@@ -924,10 +1022,44 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res) => {
   `).join("");
 
   res.send(page("Manage Services", `
-    <div class="card"><h2>Instagram Services</h2>
-    <table><tr><th>ID</th><th>Name</th><th>Provider Rate</th>
-    <th>Selling Rate</th><th>Status</th><th>Manage</th></tr>
-    ${rows}</table></div>
+    <div class="card">
+      <h2>Instagram Services</h2>
+      <input
+        type="search"
+        id="adminServiceSearch"
+        class="search-box"
+        placeholder="Search services by name, ID or status..."
+        autocomplete="off"
+      >
+      <div class="table-wrap">
+        <table id="adminServicesTable">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Provider Rate</th>
+              <th>Selling Rate</th><th>Status</th><th>Manage</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const search = document.getElementById("adminServiceSearch");
+        const tableRows = document.querySelectorAll(".admin-service-row");
+
+        search.addEventListener("input", function(){
+          const term = this.value.toLowerCase().trim();
+
+          tableRows.forEach(function(row){
+            row.style.display = row.textContent.toLowerCase().includes(term)
+              ? ""
+              : "none";
+          });
+        });
+      })();
+    </script>
   `, req.session.user));
 });
 
@@ -973,8 +1105,10 @@ app.get("/admin/payments", requireLogin, requireAdmin, async (req, res) => {
 
   res.send(page("Payments", `
     <div class="card"><h2>Fund Approval</h2>
-    <table><tr><th>ID</th><th>User</th><th>Amount</th>
-    <th>UTR</th><th>Status</th><th>Action</th></tr>${rows}</table></div>
+    <div class="table-wrap">
+      <table><tr><th>ID</th><th>User</th><th>Amount</th>
+      <th>UTR</th><th>Status</th><th>Action</th></tr>${rows}</table>
+    </div></div>
   `, req.session.user));
 });
 
@@ -1038,8 +1172,10 @@ app.get("/admin/refunds", requireLogin, requireAdmin, async (req, res) => {
 
   res.send(page("Refunds", `
     <div class="card"><h2>Refund Requests</h2>
-    <table><tr><th>ID</th><th>User</th><th>Amount</th>
-    <th>Reason</th><th>Status</th><th>Action</th></tr>${rows}</table></div>
+    <div class="table-wrap">
+      <table><tr><th>ID</th><th>User</th><th>Amount</th>
+      <th>Reason</th><th>Status</th><th>Action</th></tr>${rows}</table>
+    </div></div>
   `, req.session.user));
 });
 
@@ -1109,8 +1245,10 @@ app.get("/admin/users", requireLogin, requireAdmin, async (req, res) => {
 
   res.send(page("Customers", `
     <div class="card"><h2>Customers</h2>
-    <table><tr><th>ID</th><th>Username</th><th>Email</th>
-    <th>Balance</th><th>Role</th></tr>${rows}</table></div>
+    <div class="table-wrap">
+      <table><tr><th>ID</th><th>Username</th><th>Email</th>
+      <th>Balance</th><th>Role</th></tr>${rows}</table>
+    </div></div>
   `, req.session.user));
 });
 
@@ -1128,8 +1266,10 @@ app.get("/admin/orders", requireLogin, requireAdmin, async (req, res) => {
 
   res.send(page("Orders", `
     <div class="card"><h2>All Orders</h2>
-    <table><tr><th>ID</th><th>User</th><th>Service</th>
-    <th>Qty</th><th>Status</th><th>Provider ID</th></tr>${rows}</table></div>
+    <div class="table-wrap">
+      <table><tr><th>ID</th><th>User</th><th>Service</th>
+      <th>Qty</th><th>Status</th><th>Provider ID</th></tr>${rows}</table>
+    </div></div>
   `, req.session.user));
 });
 
