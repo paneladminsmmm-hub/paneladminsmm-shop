@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -23,8 +24,12 @@ const db = (sql, params = []) => pool.query(sql, params);
 
 const PROVIDER_URL = process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
+
 const WHATSAPP_NUMBER = "918140989426";
 const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
+
+const TELEGRAM_USERNAME = "Digital_marketing_aagency_India";
+const TELEGRAM_LINK = `https://t.me/${TELEGRAM_USERNAME}`;
 
 app.use(session({
   name: "royalpanel.sid",
@@ -71,7 +76,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// COMMON PAGE DESIGN - WHATSAPP FLOATING BUTTON HAR PAGE PAR
+// COMMON PAGE DESIGN - WHATSAPP + TELEGRAM FLOATING BUTTONS
 function page(title, content, user = null) {
   const nav = user ? `
     <nav>
@@ -125,7 +130,7 @@ small{color:#aeb8c9}
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:29px;
+  font-size:25px;
   font-weight:bold;
   text-decoration:none;
   z-index:99999;
@@ -133,6 +138,28 @@ small{color:#aeb8c9}
   border:2px solid white;
 }
 .whatsapp-float:hover{background:#1ebe5d;color:white}
+
+/* FLOATING TELEGRAM BUTTON */
+.telegram-float{
+  position:fixed;
+  width:60px;
+  height:60px;
+  bottom:90px;
+  right:20px;
+  background:#229ED9;
+  color:#fff;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:23px;
+  font-weight:bold;
+  text-decoration:none;
+  z-index:99999;
+  box-shadow:0 4px 12px rgba(0,0,0,.4);
+  border:2px solid white;
+}
+.telegram-float:hover{background:#168ac2;color:white}
 </style>
 </head>
 <body>
@@ -140,7 +167,16 @@ small{color:#aeb8c9}
 ${nav}
 <main><h2>${esc(title)}</h2>${content}</main>
 
-<!-- WHATSAPP FLOATING BUTTON ON EVERY PAGE -->
+<!-- TELEGRAM FLOATING BUTTON -->
+<a class="telegram-float"
+   href="${TELEGRAM_LINK}"
+   target="_blank"
+   rel="noopener noreferrer"
+   aria-label="Telegram Support">
+   TG
+</a>
+
+<!-- WHATSAPP FLOATING BUTTON -->
 <a class="whatsapp-float"
    href="${WHATSAPP_LINK}"
    target="_blank"
@@ -711,12 +747,12 @@ app.post("/add-funds", requireLogin, async (req, res) => {
   }
 });
 
-// SUPPORT - WHATSAPP CHAT + SUPPORT TICKET
+// SUPPORT - WHATSAPP + TELEGRAM CHAT + SUPPORT TICKET
 app.get("/support", requireLogin, (req, res) => {
   res.send(page("Support", `
     <div class="card">
       <h3>ROYAL PANEL Customer Support</h3>
-      <p>Need help? Contact our support team on WhatsApp.</p>
+      <p>Need help? Contact our support team.</p>
 
       <a class="btn"
          style="background:#25D366;color:white;display:block;text-align:center;margin:15px 0"
@@ -724,6 +760,14 @@ app.get("/support", requireLogin, (req, res) => {
          target="_blank"
          rel="noopener noreferrer">
          WhatsApp Chat - +91 8140989426
+      </a>
+
+      <a class="btn"
+         style="background:#229ED9;color:white;display:block;text-align:center;margin:15px 0"
+         href="${TELEGRAM_LINK}"
+         target="_blank"
+         rel="noopener noreferrer">
+         Telegram Chat - @Digital_marketing_aagency_India
       </a>
 
       <hr style="border:0;border-top:1px solid #384154;margin:20px 0">
@@ -1412,4 +1456,4 @@ async function start() {
   }
 }
 
-start()
+start();
