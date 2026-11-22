@@ -1,4 +1,6 @@
+
 require("dotenv").config();
+
 const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
@@ -10,11 +12,13 @@ const crypto = require("crypto");
 const path = require("path");
 
 const app = express();
+
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
@@ -37,22 +41,38 @@ const db = (sql, values = []) => pool.query(sql, values);
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const APP_URL = (process.env.APP_URL || "").replace(/\/$/, "");
+
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
-const PROVIDER_URL = process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
+
+const PROVIDER_URL =
+  process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2";
+
 const PROVIDER_KEY = process.env.SOCIALADD_API_KEY || "";
 const UPI_ID = process.env.UPI_ID || "";
 
 const WHATSAPP_NUMBER = "918140989426";
-const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
+const WHATSAPP_LINK =
+  `https://wa.me/${WHATSAPP_NUMBER}?text=Hello%20Royal%20Panel%20Support`;
+
 const TELEGRAM_USERNAME = "Digital_marketing_aagency_India";
 const TELEGRAM_LINK = `https://t.me/${TELEGRAM_USERNAME}`;
 
 const SESSION_SECRET = process.env.SESSION_SECRET || "";
 
+const INSTAGRAM_GROUPS = [
+  "Followers",
+  "Likes",
+  "Reel Views",
+  "Story Views",
+  "Comments",
+  "Saves",
+  "Shares"
+];
+
 if (process.env.NODE_ENV === "production" && !SESSION_SECRET) {
-  throw new Error("SESSION_SECRET environment variable is required in production");
+  throw new Error("SESSION_SECRET environment variable is required");
 }
 
 const googleClient = new OAuth2Client(
@@ -71,21 +91,73 @@ function esc(v) {
   })[c]);
 }
 
-function message(v) {
-  return `<div class="card notice">${esc(v)}</div>`;
-}
-
 function money(v) {
   return Number(v || 0).toFixed(2);
 }
 
-function cleanCategory(v) {
-  return String(v || "Other").replace(/[<>]/g, "").trim().slice(0, 120) || "Other";
+function message(v) {
+  return `<div class="card notice">${esc(v)}</div>`;
 }
+
+function cleanCategory(v) {
+  return String(v || "Other")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, 120) || "Other";
+}
+
+/* INSTAGRAM SERVICE FILTER */
+
+function isInstagramService(name, category) {
+  const s = `${name || ""} ${category || ""}`.toLowerCase();
+  return /\binstagram\b|\binsta\b/.test(s);
+}
+
+function getInstagramGroup(name, category) {
+  const s = `${name || ""} ${category || ""}`.toLowerCase();
+
+  if (/follower|subscriber/.test(s)) return "Followers";
+  if (/like|favorite/.test(s)) return "Likes";
+
+  if (/story/.test(s) && /view|watch|impression/.test(s)) {
+    return "Story Views";
+  }
+
+  if (/reel/.test(s) && /view|watch|impression/.test(s)) {
+    return "Reel Views";
+  }
+
+  if (/comment|reply/.test(s)) return "Comments";
+  if (/share/.test(s)) return "Shares";
+  if (/save|bookmark/.test(s)) return "Saves";
+
+  return null;
+}
+
+function socialSupportLinks() {
+  return `
+    <div class="social-float">
+      <a class="social-float-btn whatsapp-float"
+         href="${esc(WHATSAPP_LINK)}"
+         target="_blank"
+         rel="noopener">WA</a>
+
+      <a class="social-float-btn telegram-float"
+         href="${esc(TELEGRAM_LINK)}"
+         target="_blank"
+         rel="noopener">TG</a>
+    </div>
+  `;
+}
+
+/* DATABASE SESSION STORE */
 
 class PostgresSessionStore extends session.Store {
   get(sid, cb) {
-    db("SELECT sess FROM user_sessions WHERE sid=$1 AND expire>NOW()", [sid])
+    db(
+      "SELECT sess FROM user_sessions WHERE sid=$1 AND expire>NOW()",
+      [sid]
+    )
       .then(r => cb(null, r.rows[0]?.sess || null))
       .catch(cb);
   }
@@ -101,7 +173,9 @@ class PostgresSessionStore extends session.Store {
        ON CONFLICT(sid)
        DO UPDATE SET sess=EXCLUDED.sess,expire=EXCLUDED.expire`,
       [sid, JSON.stringify(sess), exp]
-    ).then(() => cb(null)).catch(cb);
+    )
+      .then(() => cb(null))
+      .catch(cb);
   }
 
   destroy(sid, cb = () => {}) {
@@ -135,6 +209,8 @@ app.use(session({
   }
 }));
 
+/* DATABASE SETUP */
+
 async function setupDatabase() {
   await db(`
     CREATE TABLE IF NOT EXISTS users(
@@ -150,14 +226,16 @@ async function setupDatabase() {
     )
   `);
 
-  const queries = [
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200)",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(14,2) DEFAULT 0",
+  await db(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(200);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(14,2) DEFAULT 0
+  `);
 
-    `CREATE TABLE IF NOT EXISTS services(
+  await db(`
+    CREATE TABLE IF NOT EXISTS services(
       id SERIAL PRIMARY KEY,
       provider_id TEXT,
       provider_source TEXT DEFAULT 'socialadd',
@@ -173,28 +251,21 @@ async function setupDatabase() {
       max INTEGER DEFAULT 1000000,
       active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    )
+  `);
 
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_source TEXT DEFAULT 'socialadd'",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_type TEXT DEFAULT 'Default'",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_rate NUMERIC(14,6) DEFAULT 0",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS service_group TEXT DEFAULT 'Other'",
-    "ALTER TABLE services ADD COLUMN IF NOT EXISTS average_time TEXT DEFAULT ''",
+  await db(`
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_source TEXT DEFAULT 'socialadd';
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_type TEXT DEFAULT 'Default';
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS provider_rate NUMERIC(14,6) DEFAULT 0;
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS service_group TEXT DEFAULT 'Other';
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS average_time TEXT DEFAULT ''
+  `);
 
-    `UPDATE services SET service_group=CASE
-      WHEN name ILIKE '%follower%' OR name ILIKE '%subscriber%' THEN 'Followers'
-      WHEN name ILIKE '%like%' THEN 'Likes'
-      WHEN name ILIKE '%view%' OR name ILIKE '%watch%' THEN 'Views'
-      WHEN name ILIKE '%comment%' THEN 'Comments'
-      WHEN name ILIKE '%share%' THEN 'Shares'
-      WHEN name ILIKE '%save%' THEN 'Saves'
-      ELSE COALESCE(NULLIF(service_group,''),'Other')
-    END
-    WHERE service_group IS NULL OR service_group='' OR service_group='Other'`,
-
-    `CREATE TABLE IF NOT EXISTS orders(
+  await db(`
+    CREATE TABLE IF NOT EXISTS orders(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       service_id INTEGER,
@@ -205,70 +276,117 @@ async function setupDatabase() {
       charge NUMERIC(14,2),
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    )
+  `);
 
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_name TEXT",
-    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT",
+  await db(`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_name TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider_order_id TEXT
+  `);
 
-    `CREATE TABLE IF NOT EXISTS payments(
+  await db(`
+    CREATE TABLE IF NOT EXISTS payments(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       amount NUMERIC(14,2),
       utr TEXT,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    )
+  `);
 
-    `CREATE TABLE IF NOT EXISTS tickets(
+  await db(`
+    CREATE TABLE IF NOT EXISTS tickets(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       message TEXT,
       status TEXT DEFAULT 'Open',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    )
+  `);
 
-    `CREATE TABLE IF NOT EXISTS refunds(
+  await db(`
+    CREATE TABLE IF NOT EXISTS refunds(
       id SERIAL PRIMARY KEY,
       user_id INTEGER REFERENCES users(id),
       amount NUMERIC(14,2),
       reason TEXT,
       status TEXT DEFAULT 'Pending',
       created_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    )
+  `);
 
-    "ALTER TABLE refunds ADD COLUMN IF NOT EXISTS funds_reserved BOOLEAN DEFAULT FALSE",
+  await db(`
+    ALTER TABLE refunds
+    ADD COLUMN IF NOT EXISTS funds_reserved BOOLEAN DEFAULT FALSE
+  `);
 
-    `CREATE TABLE IF NOT EXISTS panel_settings(
+  await db(`
+    CREATE TABLE IF NOT EXISTS panel_settings(
       setting_key TEXT PRIMARY KEY,
       setting_value TEXT NOT NULL
-    )`,
+    )
+  `);
 
-    `CREATE TABLE IF NOT EXISTS user_sessions(
+  await db(`
+    CREATE TABLE IF NOT EXISTS user_sessions(
       sid VARCHAR(255) PRIMARY KEY,
       sess JSON NOT NULL,
       expire TIMESTAMPTZ NOT NULL
-    )`,
+    )
+  `);
 
-    "CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions(expire)",
+  await db(`
+    CREATE INDEX IF NOT EXISTS user_sessions_expire_idx
+    ON user_sessions(expire)
+  `);
 
-    `INSERT INTO panel_settings(setting_key,setting_value)
-     VALUES('provider_enabled','true'),('services_enabled','true')
-     ON CONFLICT(setting_key) DO NOTHING`,
+  await db(`
+    INSERT INTO panel_settings(setting_key,setting_value)
+    VALUES('provider_enabled','true'),('services_enabled','true')
+    ON CONFLICT(setting_key) DO NOTHING
+  `);
 
-    `DELETE FROM services a
-     USING services b
-     WHERE a.id>b.id
-       AND a.provider_id IS NOT NULL
-       AND a.provider_source=b.provider_source
-       AND a.provider_id=b.provider_id`,
+  await db(`
+    DELETE FROM services a
+    USING services b
+    WHERE a.id>b.id
+      AND a.provider_id IS NOT NULL
+      AND a.provider_source=b.provider_source
+      AND a.provider_id=b.provider_id
+  `);
 
-    `CREATE UNIQUE INDEX IF NOT EXISTS services_provider_unique
-     ON services(provider_source,provider_id)
-     WHERE provider_id IS NOT NULL`
-  ];
+  await db(`
+    CREATE UNIQUE INDEX IF NOT EXISTS services_provider_unique
+    ON services(provider_source,provider_id)
+    WHERE provider_id IS NOT NULL
+  `);
 
-  for (const q of queries) {
-    await db(q);
+  /*
+    Existing services are not deleted.
+    Only recognized Instagram services are enabled.
+  */
+
+  const existing = await db("SELECT id,name,category FROM services");
+
+  for (const s of existing.rows) {
+    const group = isInstagramService(s.name, s.category)
+      ? getInstagramGroup(s.name, s.category)
+      : null;
+
+    if (group && INSTAGRAM_GROUPS.includes(group)) {
+      await db(
+        `UPDATE services
+         SET category='Instagram',service_group=$1
+         WHERE id=$2`,
+        [group, s.id]
+      );
+    } else {
+      await db(
+        "UPDATE services SET active=FALSE WHERE id=$1",
+        [s.id]
+      );
+    }
   }
 
   if (ADMIN_EMAIL) {
@@ -314,6 +432,8 @@ async function setSetting(k, v) {
     [k, String(v)]
   );
 }
+
+/* AUTHENTICATION */
 
 function requireLogin(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
@@ -361,23 +481,7 @@ function createUserSession(req, user, res) {
   });
 }
 
-function socialSupportLinks() {
-  return `
-    <div class="social-float">
-      <a class="social-float-btn whatsapp-float"
-         href="${esc(WHATSAPP_LINK)}"
-         target="_blank"
-         rel="noopener"
-         aria-label="WhatsApp">WA</a>
-
-      <a class="social-float-btn telegram-float"
-         href="${esc(TELEGRAM_LINK)}"
-         target="_blank"
-         rel="noopener"
-         aria-label="Telegram">TG</a>
-    </div>
-  `;
-}
+/* PAGE TEMPLATE */
 
 function page(title, body, user = null) {
   const admin = user?.is_admin
@@ -448,19 +552,19 @@ th{color:#16894b;white-space:nowrap}
 .category-help{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .category-chip{border:1px solid #a9dfbb;background:#effff4;border-radius:20px;padding:6px 10px;font-size:12px;color:#147b43}
 @media(max-width:600px){
-  main{margin:12px auto;padding:0 9px 90px}
-  .card{padding:14px}
-  .brand{font-size:21px}
-  .top-header{height:62px}
-  .table-wrap table{font-size:13px}
+main{margin:12px auto;padding:0 9px 90px}
+.card{padding:14px}
+.brand{font-size:21px}
+.top-header{height:62px}
+.table-wrap table{font-size:13px}
 }
 </style>
 </head>
 
 <body>
 <header class="top-header">
-  <a class="brand" href="${user ? "/services" : "/login"}">ROYAL PANEL</a>
-  ${user ? `<button class="menu-button" id="menuBtn" onclick="openMenu()">☰</button>` : ""}
+<a class="brand" href="${user ? "/services" : "/login"}">ROYAL PANEL</a>
+${user ? '<button class="menu-button" id="menuBtn" onclick="openMenu()">☰</button>' : ""}
 </header>
 
 ${user ? `
@@ -501,8 +605,12 @@ ${socialSupportLinks()}
 </html>`;
 }
 
+/* SOCIALADD API */
+
 async function providerRequest(params) {
-  if (!PROVIDER_KEY) throw new Error("SocialAdd API key missing");
+  if (!PROVIDER_KEY) {
+    throw new Error("SocialAdd API key missing");
+  }
 
   const body = new URLSearchParams({
     key: PROVIDER_KEY,
@@ -527,44 +635,13 @@ async function providerRequest(params) {
   return data;
 }
 
-function inferGroup(name, category) {
-  const s = `${name || ""} ${category || ""}`.toLowerCase();
-
-  if (/follower|subscriber/.test(s)) return "Followers";
-  if (/like|favorite/.test(s)) return "Likes";
-  if (/view|watch|impression/.test(s)) return "Views";
-  if (/comment|reply/.test(s)) return "Comments";
-  if (/share/.test(s)) return "Shares";
-  if (/save|bookmark/.test(s)) return "Saves";
-  if (/member/.test(s)) return "Members";
-  if (/vote/.test(s)) return "Votes";
-
-  return "Other";
-}
-
-function inferPlatform(name, category) {
-  const s = `${name || ""} ${category || ""}`.toLowerCase();
-
-  for (const p of [
-    "Instagram",
-    "YouTube",
-    "Facebook",
-    "TikTok",
-    "Telegram",
-    "Twitter",
-    "X",
-    "Spotify",
-    "Website"
-  ]) {
-    if (s.includes(p.toLowerCase())) return p;
-  }
-
-  return cleanCategory(category || "Other");
-}
+/* HOME */
 
 app.get("/", (req, res) => {
   res.redirect(req.session.user ? "/services" : "/login");
 });
+
+/* LOGIN */
 
 app.get("/login", (req, res) => {
   res.send(page("Login", `
@@ -602,7 +679,7 @@ app.post("/login", async (req, res, next) => {
     const r = await db(
       `SELECT * FROM users
        WHERE LOWER(email)=LOWER($1)
-       OR LOWER(username)=LOWER($1)
+          OR LOWER(username)=LOWER($1)
        LIMIT 1`,
       [identity]
     );
@@ -610,7 +687,11 @@ app.post("/login", async (req, res, next) => {
     const u = r.rows[0];
     const hash = u?.password_hash || u?.password;
 
-    if (!u || !hash || !await bcrypt.compare(String(req.body.password || ""), hash)) {
+    if (
+      !u ||
+      !hash ||
+      !await bcrypt.compare(String(req.body.password || ""), hash)
+    ) {
       return res.status(401).send(
         page("Login", message("Invalid login details"))
       );
@@ -621,6 +702,8 @@ app.post("/login", async (req, res, next) => {
     next(e);
   }
 });
+
+/* REGISTER */
 
 app.get("/register", (req, res) => {
   res.send(page("Register", `
@@ -687,9 +770,13 @@ app.post("/register", async (req, res, next) => {
   }
 });
 
+/* GOOGLE LOGIN */
+
 app.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
-    return res.status(503).send("Google Login environment settings are missing");
+    return res.status(503).send(
+      "Google Login environment settings are missing"
+    );
   }
 
   const state = crypto.randomBytes(24).toString("hex");
@@ -708,7 +795,10 @@ app.get("/auth/google", (req, res) => {
 
 app.get("/auth/google/callback", async (req, res, next) => {
   try {
-    if (!req.query.code || req.query.state !== req.session.googleState) {
+    if (
+      !req.query.code ||
+      req.query.state !== req.session.googleState
+    ) {
       return res.status(400).send("Google login state error");
     }
 
@@ -745,7 +835,8 @@ app.get("/auth/google/callback", async (req, res, next) => {
         .replace(/[^a-zA-Z0-9_]/g, "")
         .slice(0, 20) || "customer";
 
-      const username = base + "_" + crypto.randomBytes(3).toString("hex");
+      const username =
+        base + "_" + crypto.randomBytes(3).toString("hex");
 
       r = await db(
         `INSERT INTO users(username,email,google_id)
@@ -781,7 +872,7 @@ app.get("/dashboard", requireLogin, (req, res) => {
   res.redirect("/services");
 });
 
-/* CUSTOMER ORDER PAGE */
+/* CUSTOMER SERVICES - INSTAGRAM ONLY */
 
 app.get("/services", requireLogin, async (req, res, next) => {
   try {
@@ -793,22 +884,25 @@ app.get("/services", requireLogin, async (req, res, next) => {
     );
 
     const result = await db(
-      "SELECT * FROM services WHERE active=TRUE ORDER BY category,service_group,id"
+      `SELECT * FROM services
+       WHERE active=TRUE
+         AND category='Instagram'
+         AND service_group=ANY($1::text[])
+       ORDER BY service_group,id`,
+      [INSTAGRAM_GROUPS]
     );
 
     const services = result.rows;
 
-    const categories = [
-      ...new Set(
-        services.map(s => s.service_group || inferGroup(s.name, s.category))
-      )
-    ].sort();
+    const categories = INSTAGRAM_GROUPS.filter(group =>
+      services.some(s => s.service_group === group)
+    );
 
     const payload = services.map(s => ({
       id: s.id,
       name: s.name,
-      category: s.category || "Other",
-      group: s.service_group || inferGroup(s.name, s.category),
+      category: "Instagram",
+      group: s.service_group,
       description: s.description || "",
       averageTime: s.average_time || "",
       rate: Number(s.rate),
@@ -820,7 +914,6 @@ app.get("/services", requireLogin, async (req, res, next) => {
 
     const body = `
       <div class="card">
-
         <div style="background:#20ad62;color:white;border-radius:10px;padding:14px">
           <div style="font-size:13px">WALLET BALANCE</div>
           <div style="font-size:25px;font-weight:bold">
@@ -828,25 +921,28 @@ app.get("/services", requireLogin, async (req, res, next) => {
           </div>
         </div>
 
-        <h2>New Order</h2>
+        <h2>Instagram New Order</h2>
+
+        <div class="category-help">
+          ${INSTAGRAM_GROUPS.map(g =>
+            `<span class="category-chip">${esc(g)}</span>`
+          ).join("")}
+        </div>
 
         ${enabled === "true" ? `
           <form method="POST" action="/order" id="orderForm">
 
-            <label>Search Services</label>
-            <input
-              type="search"
-              id="serviceSearch"
+            <label>Search Instagram Services</label>
+            <input type="search" id="serviceSearch"
               placeholder="Search service name or ID..."
-              autocomplete="off"
-            >
+              autocomplete="off">
 
-            <label>Category</label>
+            <label>Instagram Category</label>
             <select id="categorySelect" required>
               <option value="">Select Category</option>
-              ${categories.map(c => `
-                <option value="${esc(c)}">${esc(c)}</option>
-              `).join("")}
+              ${categories.map(c =>
+                `<option value="${esc(c)}">${esc(c)}</option>`
+              ).join("")}
             </select>
 
             <label>Service</label>
@@ -863,24 +959,14 @@ app.get("/services", requireLogin, async (req, res, next) => {
             <div class="service-info" id="averageTime">—</div>
 
             <label>Link</label>
-            <input
-              name="link"
-              id="orderLink"
-              placeholder="Enter post / profile link"
-              required
-              maxlength="2000"
-            >
+            <input name="link" id="orderLink"
+              placeholder="Enter Instagram post / profile link"
+              required maxlength="2000">
 
             <label>Quantity</label>
-            <input
-              name="quantity"
-              id="quantity"
-              type="number"
-              min="1"
-              step="1"
-              placeholder="Enter quantity"
-              required
-            >
+            <input name="quantity" id="quantity"
+              type="number" min="1" step="1"
+              placeholder="Enter quantity" required>
 
             <div class="muted" id="quantityLimit">
               Select a service to see minimum and maximum quantity.
@@ -910,6 +996,16 @@ app.get("/services", requireLogin, async (req, res, next) => {
 
             let current = null;
 
+            function escapeText(v) {
+              return String(v).replace(/[&<>"']/g, c => ({
+                '&':'&amp;',
+                '<':'&lt;',
+                '>':'&gt;',
+                '"':'&quot;',
+                "'":'&#39;'
+              }[c]));
+            }
+
             function fillServices() {
               const group = cat.value;
               const term = search.value.trim().toLowerCase();
@@ -933,16 +1029,6 @@ app.get("/services", requireLogin, async (req, res, next) => {
               showInfo();
             }
 
-            function escapeText(v) {
-              return String(v).replace(/[&<>"']/g, c => ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-              }[c]));
-            }
-
             function showInfo() {
               const s = SERVICES.find(x => String(x.id) === sel.value);
               current = s || null;
@@ -950,19 +1036,15 @@ app.get("/services", requireLogin, async (req, res, next) => {
               if (!s) {
                 desc.textContent = 'Select a service to see details.';
                 avg.textContent = '—';
-                lim.textContent =
-                  'Select a service to see minimum and maximum quantity.';
+                lim.textContent = 'Select a service to see minimum and maximum quantity.';
                 qty.removeAttribute('min');
                 qty.removeAttribute('max');
                 charge.textContent = '₹0.00';
                 return;
               }
 
-              desc.textContent =
-                s.description || 'No description provided by provider.';
-
-              avg.textContent =
-                s.averageTime || 'Not provided by provider';
+              desc.textContent = s.description || 'No description provided.';
+              avg.textContent = s.averageTime || 'Not provided by provider';
 
               qty.min = s.min;
               qty.max = s.max;
@@ -983,7 +1065,7 @@ app.get("/services", requireLogin, async (req, res, next) => {
               const n = Number(qty.value || 0);
 
               charge.textContent =
-                '₹' + (n > 0 ? (current.rate * n / 1000) : 0).toFixed(2);
+                '₹' + (n > 0 ? current.rate * n / 1000 : 0).toFixed(2);
             }
 
             cat.addEventListener('change', fillServices);
@@ -999,11 +1081,13 @@ app.get("/services", requireLogin, async (req, res, next) => {
       </div>
     `;
 
-    res.send(page("New Order", body, req.session.user));
+    res.send(page("Instagram Services", body, req.session.user));
   } catch (e) {
     next(e);
   }
 });
+
+/* PLACE ORDER - INSTAGRAM ONLY */
 
 app.post("/order", requireLogin, async (req, res, next) => {
   const client = await pool.connect();
@@ -1017,14 +1101,19 @@ app.post("/order", requireLogin, async (req, res, next) => {
     }
 
     const sr = await client.query(
-      "SELECT * FROM services WHERE id=$1 AND active=TRUE FOR UPDATE",
-      [req.body.service_id]
+      `SELECT * FROM services
+       WHERE id=$1
+         AND active=TRUE
+         AND category='Instagram'
+         AND service_group=ANY($2::text[])
+       FOR UPDATE`,
+      [req.body.service_id, INSTAGRAM_GROUPS]
     );
 
     const service = sr.rows[0];
 
     if (!service) {
-      throw new Error("Selected service not found or disabled");
+      throw new Error("Selected Instagram service not found or disabled");
     }
 
     if (
@@ -1109,7 +1198,9 @@ app.post("/order", requireLogin, async (req, res, next) => {
         }
 
         await db(
-          "UPDATE orders SET provider_order_id=$1,status='Processing' WHERE id=$2",
+          `UPDATE orders
+           SET provider_order_id=$1,status='Processing'
+           WHERE id=$2`,
           [String(data.order), orderId]
         );
       } catch (pe) {
@@ -1158,6 +1249,8 @@ app.post("/order", requireLogin, async (req, res, next) => {
   }
 });
 
+/* CUSTOMER ORDERS */
+
 app.get("/orders", requireLogin, async (req, res, next) => {
   try {
     const r = await db(
@@ -1205,11 +1298,9 @@ app.get("/funds", requireLogin, (req, res) => {
       <h2>Add Funds</h2>
 
       <div class="qr-box">
-        <img
-          src="/payment-qr.png"
+        <img src="/payment-qr.png"
           alt="UPI Payment QR"
-          onerror="this.style.display='none';document.getElementById('qrError').style.display='block'"
-        >
+          onerror="this.style.display='none';document.getElementById('qrError').style.display='block'">
         <div class="qr-caption">Scan QR Code to Pay</div>
       </div>
 
@@ -1269,7 +1360,7 @@ app.post("/funds", requireLogin, async (req, res, next) => {
   }
 });
 
-/* REFUND */
+/* REFUND REQUEST */
 
 app.get("/refund", requireLogin, (req, res) => {
   res.send(page("Refund", `
@@ -1354,12 +1445,8 @@ app.get("/support", requireLogin, (req, res) => {
       <h2>Support</h2>
 
       <form method="POST" action="/support">
-        <textarea
-          name="message"
-          required
-          maxlength="3000"
-          placeholder="Write your message"
-        ></textarea>
+        <textarea name="message" required maxlength="3000"
+          placeholder="Write your message"></textarea>
         <button>Send Message</button>
       </form>
 
@@ -1398,10 +1485,10 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
       setting("services_enabled"),
       db(`
         SELECT
-          (SELECT COUNT(*) FROM users) users,
-          (SELECT COUNT(*) FROM orders) orders,
-          (SELECT COUNT(*) FROM payments WHERE status='Pending') pending_payments,
-          (SELECT COUNT(*) FROM refunds WHERE status='Pending') pending_refunds
+          (SELECT COUNT(*) FROM users) AS users,
+          (SELECT COUNT(*) FROM orders) AS orders,
+          (SELECT COUNT(*) FROM payments WHERE status='Pending') AS pending_payments,
+          (SELECT COUNT(*) FROM refunds WHERE status='Pending') AS pending_refunds
       `)
     ]);
 
@@ -1429,7 +1516,7 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
         </form>
 
         <form method="POST" action="/admin/import">
-          <button>Import / Update All Provider Services</button>
+          <button>Import / Update Instagram Services</button>
         </form>
 
         <form method="POST" action="/admin/provider-test">
@@ -1438,7 +1525,7 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
       </div>
 
       <div class="card">
-        <h3>All Services</h3>
+        <h3>Instagram Services</h3>
         <p>${s === "true" ? "Enabled" : "Disabled"}</p>
 
         <form method="POST" action="/admin/services-toggle">
@@ -1494,7 +1581,7 @@ app.post("/admin/provider-test", requireLogin, requireAdmin, async (req, res) =>
   }
 });
 
-/* IMPORT ALL PROVIDER SERVICES */
+/* IMPORT INSTAGRAM SERVICES ONLY */
 
 app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   try {
@@ -1508,20 +1595,45 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
       throw new Error("Invalid provider services response");
     }
 
+    /*
+      Disable old SocialAdd entries first.
+      Historical orders and service records are preserved.
+    */
+
+    await db(
+      "UPDATE services SET active=FALSE WHERE provider_source='socialadd'"
+    );
+
     let imported = 0;
+    let skipped = 0;
 
     for (const item of list) {
       const providerId = String(item.service || "").trim();
-      const name = String(item.name || "Social Media Service");
-      const rawCategory = String(item.category || inferPlatform(name, item.category));
-      const group = inferGroup(name, rawCategory);
-      const platform = inferPlatform(name, rawCategory);
+      const name = String(item.name || "").trim();
+      const rawCategory = String(item.category || "").trim();
+
+      if (!providerId || !name) {
+        skipped++;
+        continue;
+      }
+
+      if (!isInstagramService(name, rawCategory)) {
+        skipped++;
+        continue;
+      }
+
+      const group = getInstagramGroup(name, rawCategory);
+
+      if (!group || !INSTAGRAM_GROUPS.includes(group)) {
+        skipped++;
+        continue;
+      }
+
       const providerRate = Number(item.rate || 0);
       const min = Number(item.min || 1);
       const max = Number(item.max || 1000000);
 
       if (
-        !providerId ||
         !Number.isFinite(providerRate) ||
         providerRate < 0 ||
         !Number.isInteger(min) ||
@@ -1529,6 +1641,7 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
         min < 1 ||
         max < min
       ) {
+        skipped++;
         continue;
       }
 
@@ -1541,6 +1654,9 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
         item.time ||
         ""
       ).slice(0, 200);
+
+      const description = String(item.description || "").slice(0, 5000);
+      const providerType = String(item.type || "Default").slice(0, 100);
 
       await db(
         `INSERT INTO services(
@@ -1559,25 +1675,28 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
           active
         )
         VALUES(
-          $1,'socialadd','Default',$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE
+          $1,'socialadd',$2,$3,'Instagram',$4,$5,$6,$7,$8,$9,$10,TRUE
         )
         ON CONFLICT(provider_source,provider_id)
         WHERE provider_id IS NOT NULL
         DO UPDATE SET
+          provider_type=EXCLUDED.provider_type,
           name=EXCLUDED.name,
-          category=EXCLUDED.category,
+          category='Instagram',
           service_group=EXCLUDED.service_group,
           description=EXCLUDED.description,
           average_time=EXCLUDED.average_time,
+          rate=EXCLUDED.rate,
           provider_rate=EXCLUDED.provider_rate,
           min=EXCLUDED.min,
-          max=EXCLUDED.max`,
+          max=EXCLUDED.max,
+          active=TRUE`,
         [
           providerId,
+          providerType,
           name,
-          platform,
           group,
-          String(item.description || ""),
+          description,
           average,
           sellingRate,
           providerRate,
@@ -1591,7 +1710,7 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
 
     res.send(page(
       "Import",
-      message(`Services imported or updated: ${imported}`),
+      message(`Instagram services imported or updated: ${imported}. Skipped: ${skipped}.`),
       req.session.user
     ));
   } catch (e) {
@@ -1603,18 +1722,22 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   }
 });
 
-/* MANAGE SERVICES */
+/* ADMIN MANAGE INSTAGRAM SERVICES */
 
 app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) => {
   try {
     const r = await db(
-      "SELECT * FROM services ORDER BY id DESC LIMIT 1000"
+      `SELECT * FROM services
+       WHERE category='Instagram'
+         AND service_group=ANY($1::text[])
+       ORDER BY id DESC
+       LIMIT 1000`,
+      [INSTAGRAM_GROUPS]
     );
 
     const rows = r.rows.map(s => `
       <tr>
         <td>${esc(s.id)}</td>
-        <td>${esc(s.category)}</td>
         <td>${esc(s.service_group)}</td>
         <td>${esc(s.name)}</td>
         <td>${esc(s.min)}–${esc(s.max)}</td>
@@ -1623,15 +1746,11 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) =>
         <td>${s.active ? "Active" : "Disabled"}</td>
         <td>
           <form method="POST" action="/admin/service/${esc(s.id)}">
-            <input
-              name="rate"
-              type="number"
-              step="0.0001"
-              min="0"
-              value="${esc(s.rate)}"
-              required
-            >
+            <input name="rate" type="number" step="0.0001"
+              min="0" value="${esc(s.rate)}" required>
+
             <button name="save" value="1">Save Price</button>
+
             <button name="active" value="${!s.active}">
               ${s.active ? "Disable" : "Enable"}
             </button>
@@ -1640,21 +1759,18 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) =>
       </tr>
     `).join("");
 
-    res.send(page("Manage Services", `
+    res.send(page("Manage Instagram Services", `
       <div class="card">
-        <h2>Manage All Services</h2>
+        <h2>Manage Instagram Services</h2>
 
-        <input
-          id="adminSearch"
-          placeholder="Search by ID, category or service"
-        >
+        <input id="adminSearch"
+          placeholder="Search by ID, category or service">
 
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Platform</th>
                 <th>Group</th>
                 <th>Name</th>
                 <th>Limits</th>
@@ -1703,13 +1819,19 @@ app.post("/admin/service/:id", requireLogin, requireAdmin, async (req, res, next
       }
 
       await db(
-        "UPDATE services SET rate=$1 WHERE id=$2",
-        [rate, id]
+        `UPDATE services SET rate=$1
+         WHERE id=$2
+           AND category='Instagram'
+           AND service_group=ANY($3::text[])`,
+        [rate, id, INSTAGRAM_GROUPS]
       );
     } else {
       await db(
-        "UPDATE services SET active=$1 WHERE id=$2",
-        [req.body.active === "true", id]
+        `UPDATE services SET active=$1
+         WHERE id=$2
+           AND category='Instagram'
+           AND service_group=ANY($3::text[])`,
+        [req.body.active === "true", id, INSTAGRAM_GROUPS]
       );
     }
 
@@ -2023,12 +2145,16 @@ app.get("/admin/orders", requireLogin, requireAdmin, async (req, res, next) => {
   }
 });
 
+/* LOGOUT */
+
 app.get("/logout", (req, res) => {
   req.session.destroy(() => {
     res.clearCookie("royal.sid");
     res.redirect("/login");
   });
 });
+
+/* HEALTH CHECK */
 
 app.get("/health", (req, res) => {
   res.json({
@@ -2037,6 +2163,8 @@ app.get("/health", (req, res) => {
   });
 });
 
+/* ERROR HANDLER */
+
 app.use((err, req, res, next) => {
   console.error("Server error:", err);
 
@@ -2044,6 +2172,8 @@ app.use((err, req, res, next) => {
 
   res.status(500).send("Server error. Please try again later.");
 });
+
+/* START SERVER */
 
 const PORT = process.env.PORT || 3000;
 
