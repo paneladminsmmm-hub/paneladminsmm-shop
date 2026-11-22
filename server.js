@@ -267,7 +267,6 @@ async function setupDatabase() {
     ON CONFLICT (setting_key) DO NOTHING
   `);
 
-  // Remove old duplicate provider services before adding unique index.
   await db(`
     DELETE FROM services a
     USING services b
@@ -324,7 +323,7 @@ async function setSetting(key, value) {
   await db(
     `INSERT INTO panel_settings(setting_key,setting_value)
      VALUES($1,$2)
-     ON CONFLICT(setting_key)
+     ON CONFLICT (setting_key)
      DO UPDATE SET setting_value=EXCLUDED.setting_value`,
     [key, String(value)]
   );
@@ -378,22 +377,36 @@ function createUserSession(req, user, res) {
   });
 }
 
-/* -------------------- SUPPORT LINKS -------------------- */
+/* -------------------- GLOBAL WHATSAPP + TELEGRAM -------------------- */
 
 function socialSupportLinks() {
   return `
-    <div class="social-links">
-      <a class="social-link whatsapp-link"
+    <div class="social-float" aria-label="Contact Support">
+
+      <a class="social-float-btn whatsapp-float"
          href="${esc(WHATSAPP_LINK)}"
-         target="_blank" rel="noopener noreferrer">
-        WhatsApp Support
+         target="_blank"
+         rel="noopener noreferrer"
+         aria-label="WhatsApp Support"
+         title="WhatsApp Support">
+
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path fill="currentColor" d="M16 2.5A13.3 13.3 0 0 0 4.6 22.7L3 29l6.5-1.7A13.4 13.4 0 1 0 16 2.5zm0 24.2c-2 0-3.9-.5-5.6-1.5l-.4-.2-3.9 1 1-3.8-.3-.4a10.9 10.9 0 1 1 9.2 4.9zm6-8.1c-.3-.2-1.8-.9-2.1-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-1 1.2-.2.2-.4.2-.7.1-1.8-.9-3-1.6-4.2-3.6-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.6l-.9-2.2c-.2-.5-.5-.4-.7-.4h-.6c-.2 0-.6.1-.9.4-.3.3-1.1 1.1-1.1 2.6s1.1 3 1.2 3.2c.2.2 2.2 3.4 5.3 4.7 2 .9 2.8 1 3.8.8.6-.1 1.8-.7 2.1-1.4.3-.7.3-1.3.2-1.4-.1-.2-.3-.3-.6-.5z"/>
+        </svg>
       </a>
 
-      <a class="social-link telegram-link"
+      <a class="social-float-btn telegram-float"
          href="${esc(TELEGRAM_LINK)}"
-         target="_blank" rel="noopener noreferrer">
-        Telegram Support
+         target="_blank"
+         rel="noopener noreferrer"
+         aria-label="Telegram Support"
+         title="Telegram Support">
+
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M21.9 4.2 18.6 20c-.2 1.1-.8 1.4-1.7.9l-4.7-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.4-4.8 8.7-7.9c.4-.4-.1-.6-.6-.2L6.7 14.1 2.1 12.7c-1-.3-1-1 .2-1.5L20.2 4.3c.8-.3 1.5.2 1.7-.1z"/>
+        </svg>
       </a>
+
     </div>
   `;
 }
@@ -483,7 +496,7 @@ function page(title, body, user = null) {
         color:#ff647c;margin-top:18px;border-top:1px solid #34343e;
         border-radius:0;padding-top:20px
       }
-      main{width:100%;max-width:1100px;margin:25px auto;padding:15px}
+      main{width:100%;max-width:1100px;margin:25px auto;padding:15px 15px 95px}
       .card{
         background:rgba(23,23,29,.96);border:1px solid #393943;
         border-radius:15px;padding:20px;margin:13px 0;
@@ -508,22 +521,56 @@ function page(title, body, user = null) {
       th{color:#ff758a;white-space:nowrap}
       .muted{color:#bbb}
       .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
-      .social-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
-      .social-link{display:inline-flex;align-items:center;gap:9px;padding:11px 15px;border-radius:10px;color:white;font-weight:bold;margin:0}
-      .whatsapp-link{background:#128c4a}
-      .telegram-link{background:#168acb}
+
+      /* WhatsApp and Telegram fixed side-by-side buttons */
+      .social-float{
+        position:fixed;
+        right:18px;
+        bottom:18px;
+        z-index:9999;
+        display:flex;
+        flex-direction:row;
+        align-items:center;
+        gap:10px;
+      }
+      .social-float-btn{
+        width:54px;
+        height:54px;
+        border-radius:50%;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        color:#fff;
+        text-decoration:none;
+        box-shadow:0 5px 18px rgba(0,0,0,.45);
+        border:2px solid rgba(255,255,255,.85);
+        transition:transform .2s;
+      }
+      .social-float-btn:hover{transform:scale(1.08)}
+      .social-float-btn svg{
+        width:29px;
+        height:29px;
+        display:block;
+      }
+      .whatsapp-float{background:#25D366}
+      .telegram-float{background:#229ED9}
+
       .search-box{margin:10px 0 15px}
       .qr-box{text-align:center;margin:18px auto;padding:15px;background:#fff;border-radius:14px;max-width:320px}
       .qr-box img{display:block;width:100%;max-width:260px;height:auto;margin:auto}
       .qr-caption{color:#222;font-weight:bold;margin-top:10px}
       .table-wrap{width:100%;overflow-x:auto}
       .table-wrap table{min-width:650px}
+
       @media(max-width:600px){
         .top-header{min-height:75px;padding:10px 13px}
         .brand{font-size:23px}
         .menu-button{width:58px;height:53px}
-        main{margin:15px auto;padding:10px}
+        main{margin:15px auto;padding:10px 10px 90px}
         .card{padding:15px}
+        .social-float{right:12px;bottom:12px;gap:8px}
+        .social-float-btn{width:49px;height:49px}
+        .social-float-btn svg{width:26px;height:26px}
       }
     </style>
   </head>
@@ -582,7 +629,11 @@ function page(title, body, user = null) {
         });
       </script>
     ` : ""}
+
     <main>${body}</main>
+
+    ${socialSupportLinks()}
+
   </body>
   </html>`;
 }
@@ -990,7 +1041,6 @@ app.post("/order", requireLogin, async (req, res, next) => {
           [String(data.order), orderId]
         );
       } catch (providerError) {
-        // Provider failed: return customer money exactly once.
         const refundClient = await pool.connect();
 
         try {
@@ -1159,7 +1209,6 @@ app.post("/refund", requireLogin, async (req, res, next) => {
       throw new Error("Insufficient wallet balance.");
     }
 
-    // Reserve the requested amount immediately to prevent duplicate requests.
     await client.query(
       `UPDATE users SET balance=balance-$1 WHERE id=$2`,
       [amount, req.session.user.id]
@@ -1198,7 +1247,7 @@ app.get("/support", requireLogin, (req, res) => {
         <button>Send Message</button>
       </form>
       <h3>Contact Us</h3>
-      ${socialSupportLinks()}
+      <p class="muted">WhatsApp और Telegram के बटन स्क्रीन के नीचे दिखाई दे रहे हैं।</p>
     </div>
   `, req.session.user));
 });
@@ -1301,7 +1350,6 @@ app.post("/admin/services-toggle", requireLogin, requireAdmin, async (req, res, 
   try {
     const enabled = req.body.value === "true";
 
-    // Only changes the global switch. Individual service active values stay unchanged.
     await setSetting("services_enabled", enabled);
 
     res.redirect("/admin");
@@ -1652,7 +1700,6 @@ app.post("/admin/refund/:id", requireLogin, requireAdmin, async (req, res, next)
 
     if (req.body.action === "approve") {
       if (!refund.funds_reserved) {
-        // Backward compatibility for old pending requests.
         const user = await client.query(
           `SELECT balance FROM users WHERE id=$1 FOR UPDATE`,
           [refund.user_id]
