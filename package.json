@@ -1,23 +1,23 @@
 
 {
-  "name": "paneladmin-smm-shop",
+  "name": "royal-panel",
   "version": "1.0.0",
-  "description": "PanelAdminSMM.shop",
+  "description": "ROYAL PANEL SMM",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^10.0.0",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "express-session": "^1.18.1",
-    "google-auth-library": "^10.5.0",
+    "google-auth-library": "^9.15.1",
     "helmet": "^8.0.0",
     "pg": "^8.13.1"
   }
