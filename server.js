@@ -58,56 +58,7 @@ async function providerRequest(params) {
     process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2"
   ).trim();
 
-  if (!apiKey) {
-    throw new Error("SOCIALADD_API_KEY is missing");
-  }
 
-  const body = new URLSearchParams({
-    ...params,
-    key: apiKey
-  });
-
-  let response;
-
-  try {
-    response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body,
-      signal: AbortSignal.timeout(30000)
-    });
-  } catch (error) {
-    console.error("SocialAdd connection error:", error.message);
-    throw new Error("Provider connection failed: " + error.message);
-  }
-
-  const raw = await response.text();
-
-  let data;
-
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    console.error("SocialAdd invalid response:", response.status);
-    throw new Error("Provider returned an invalid response");
-  }
-
-  if (!response.ok || data?.error) {
-    console.error("SocialAdd API rejected request:", {
-      httpStatus: response.status,
-      error: data?.error || "Unknown provider error",
-      action: params.action
-    });
-
-    throw new Error(
-      data?.error || `Provider HTTP ${response.status}`
-    );
-  }
-
-  return data;
-}
 
 const UPI_ID = process.env.UPI_ID || "";
 
