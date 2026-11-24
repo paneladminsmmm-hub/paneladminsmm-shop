@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -46,19 +45,13 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 
-const PROVIDER_URL =
+const PROVIDER_URL = String(
   process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2"
+).trim();
 
-
-/* SOCIALADD API - FIXED */
-
-async function providerRequest(params) {
-  const apiKey = String(process.env.SOCIALADD_API_KEY || "").trim();
-  const apiUrl = String(
-    process.env.SOCIALADD_API_URL || "https://socialadd.in/api/v2"
-  ).trim();
-
-
+const PROVIDER_KEY = String(
+  process.env.SOCIALADD_API_KEY || ""
+).trim();
 
 const UPI_ID = process.env.UPI_ID || "";
 
@@ -372,11 +365,6 @@ async function setupDatabase() {
     WHERE provider_id IS NOT NULL
   `);
 
-  /*
-    Existing services are not deleted.
-    Only recognized Instagram services are enabled.
-  */
-
   const existing = await db("SELECT id,name,category FROM services");
 
   for (const s of existing.rows) {
@@ -615,7 +603,7 @@ ${socialSupportLinks()}
 </html>`;
 }
 
-/* SOCIALADD API */
+/* SOCIALADD API - FIXED */
 
 async function providerRequest(params) {
   if (!PROVIDER_KEY) {
@@ -1604,11 +1592,6 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
     if (!Array.isArray(list)) {
       throw new Error("Invalid provider services response");
     }
-
-    /*
-      Disable old SocialAdd entries first.
-      Historical orders and service records are preserved.
-    */
 
     await db(
       "UPDATE services SET active=FALSE WHERE provider_source='socialadd'"
