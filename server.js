@@ -13,6 +13,7 @@ const path = require("path");
 const app = express();
 
 app.set("trust proxy", 1);
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "1mb" }));
@@ -22,8 +23,11 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => req.path === "/health"
 }));
+
+/* DATABASE CONNECTION */
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -36,6 +40,22 @@ const pool = new Pool({
 });
 
 const db = (sql, values = []) => pool.query(sql, values);
+
+/* DATABASE ERROR LOGGING */
+
+pool.on("error", (err) => {
+  console.error("PostgreSQL idle client error:", err);
+});
+
+pool.on("connect", () => {
+  console.log("PostgreSQL client connected");
+});
+
+pool.on("remove", () => {
+  console.log("PostgreSQL client removed");
+});
+
+/* ENVIRONMENT SETTINGS */
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
@@ -83,6 +103,8 @@ const googleClient = new OAuth2Client(
   GOOGLE_CLIENT_SECRET,
   APP_URL ? APP_URL + "/auth/google/callback" : undefined
 );
+
+/* HELPERS */
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({
@@ -197,6 +219,8 @@ class PostgresSessionStore extends session.Store {
       .catch(cb);
   }
 }
+
+/* SESSION CONFIGURATION */
 
 app.use(session({
   name: "royal.sid",
@@ -411,13 +435,18 @@ async function setupDatabase() {
       );
     }
   }
+
+  console.log("Database tables and settings are ready");
 }
+
+/* PANEL SETTINGS */
 
 async function setting(k) {
   const r = await db(
     "SELECT setting_value FROM panel_settings WHERE setting_key=$1",
     [k]
   );
+
   return r.rows[0]?.setting_value || "false";
 }
 
@@ -603,7 +632,7 @@ ${socialSupportLinks()}
 </html>`;
 }
 
-/* SOCIALADD API - FIXED */
+/* SOCIALADD API */
 
 async function providerRequest(params) {
   if (!PROVIDER_KEY) {
@@ -2148,13 +2177,29 @@ app.get("/logout", (req, res) => {
   });
 });
 
-/* HEALTH CHECK */
+/* DATABASE HEALTH CHECK */
 
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    app: "ROYAL PANEL"
-  });
+app.get("/health", async (req, res) => {
+  try {
+    await db("SELECT 1");
+
+    res.status(200).json({
+      status: "ok",
+      app: "ROYAL PANEL",
+      database: "connected",
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error("Health check database error:", err.message);
+
+    res.status(503).json({
+      status: "error",
+      app: "ROYAL PANEL",
+      database: "disconnected",
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 /* ERROR HANDLER */
@@ -2169,15 +2214,90 @@ app.use((err, req, res, next) => {
 
 /* START SERVER */
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-setupDatabase()
-  .then(() => {
-    app.listen(PORT, () => {
+let server;
+let shuttingDown = false;
+
+async function startServer() {
+  try {
+    console.log("Starting ROYAL PANEL...");
+
+    await setupDatabase();
+
+    console.log("Database setup completed successfully");
+
+    server = app.listen(PORT, "0.0.0.0", () => {
       console.log("ROYAL PANEL running on port " + PORT);
+      console.log("Health check route: /health");
     });
-  })
-  .catch(e => {
-    console.error("Database setup failed:", e);
+
+    server.on("error", (err) => {
+      console.error("HTTP server error:", err);
+      process.exit(1);
+    });
+
+  } catch (err) {
+    console.error("ROYAL PANEL startup failed:", err);
+
+    await pool.end().catch(() => {});
+
     process.exit(1);
-  });
+  }
+}
+
+/* GRACEFUL SHUTDOWN */
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+
+  shuttingDown = true;
+
+  console.log(signal + " received. Shutting down safely...");
+
+  const forceExit = setTimeout(() => {
+    console.error("Forced shutdown after timeout");
+    process.exit(1);
+  }, 10000);
+
+  forceExit.unref();
+
+  try {
+    if (server) {
+      await new Promise((resolve) => {
+        server.close(resolve);
+      });
+    }
+
+    await pool.end();
+
+    console.log("ROYAL PANEL shut down successfully");
+
+    clearTimeout(forceExit);
+    process.exit(0);
+
+  } catch (err) {
+    console.error("Shutdown error:", err);
+
+    clearTimeout(forceExit);
+    process.exit(1);
+  }
+}
+
+/* PROCESS SIGNALS */
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Promise Rejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  shutdown("UNCAUGHT_EXCEPTION");
+});
+
+/* RUN APPLICATION */
+
+startServer();
