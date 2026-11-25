@@ -526,7 +526,7 @@ main{max-width:900px;margin:22px auto;padding:0 12px 100px}
 h1,h2,h3{color:#147b43;margin-top:5px}
 label{display:block;font-size:14px;font-weight:bold;margin:12px 0 4px;color:#345b46}
 input,select,textarea{width:100%;padding:13px;margin:5px 0;border:1px solid #b5e6c7;border-radius:9px;background:#eaf8ff;color:#183328;font-size:15px}
-input:focus,select:focus,textarea:focus{outline:2px solid #7bd99e}
+input:focus,select:focus{outline:2px solid #7bd99e}
 button{background:#20ad62;color:white;padding:12px 18px;border:0;border-radius:9px;margin:5px 0;cursor:pointer;font-size:14px;font-weight:bold}
 button:hover{background:#16894b}
 .primary{width:100%;font-size:16px}
@@ -1639,7 +1639,7 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
         continue;
       }
 
-      const sellingRate = providerRate * 1.75;
+      const sellingRate = providerRate * 2.00;
 
       const average = String(
         item.average_time ||
