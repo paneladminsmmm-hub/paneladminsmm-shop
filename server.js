@@ -898,6 +898,7 @@ app.get("/services", requireLogin, async (req, res, next) => {
 
     const payload = services.map(s => ({
       id: s.id,
+      providerId: String(s.provider_id || ""),
       name: s.name,
       category: "Instagram",
       group: s.service_group,
@@ -1010,7 +1011,7 @@ app.get("/services", requireLogin, async (req, res, next) => {
 
               const list = SERVICES.filter(s =>
                 (!group || s.group === group) &&
-                (!term || (s.name + ' ' + s.id + ' ' + s.category)
+                (!term || (s.name + ' ' + s.providerId + ' ' + s.category)
                   .toLowerCase().includes(term))
               );
 
@@ -1018,7 +1019,7 @@ app.get("/services", requireLogin, async (req, res, next) => {
                 '<option value="">Select a service</option>' +
                 list.map(s =>
                   '<option value="' + s.id + '">' +
-                  s.id + ' - ' + escapeText(s.name) +
+                  escapeText(s.providerId) + ' - ' + escapeText(s.name) +
                   ' — ₹' + s.rate.toFixed(2) + '/1K</option>'
                 ).join('');
 
