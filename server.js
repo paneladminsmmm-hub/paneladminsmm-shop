@@ -39,7 +39,6 @@ const pool = new Pool({
 });
 
 const db = (sql, values = []) => pool.query(sql, values);
-
 pool.on("error", err => console.error("PostgreSQL:", err));
 
 /* SETTINGS */
@@ -119,6 +118,13 @@ function getInstagramGroup(name, category) {
   if (/save|bookmark/.test(s)) return "Saves";
 
   return null;
+}
+
+function captchaQuestion(req) {
+  const a = crypto.randomInt(2, 10);
+  const b = crypto.randomInt(1, 9);
+  req.session.captchaAnswer = String(a + b);
+  return `${a} + ${b} = ?`;
 }
 
 function socialSupportLinks() {
@@ -411,7 +417,7 @@ async function requireAdmin(req, res, next) {
   }
 }
 
-function createUserSession(req, user, res) {
+function createUserSession(req, user, res, remember = true) {
   req.session.regenerate(err => {
     if (err) return res.status(500).send("Session error");
 
@@ -422,6 +428,13 @@ function createUserSession(req, user, res) {
       is_admin: Boolean(user.is_admin)
     };
 
+    if (remember) {
+      req.session.cookie.maxAge = 7 * 86400000;
+    } else {
+      req.session.cookie.expires = false;
+      req.session.cookie.maxAge = null;
+    }
+
     req.session.save(err => {
       if (err) return res.status(500).send("Session save error");
       res.redirect(user.is_admin ? "/admin" : "/services");
@@ -429,7 +442,7 @@ function createUserSession(req, user, res) {
   });
 }
 
-/* DESIGN AND PAGE TEMPLATE */
+/* PAGE TEMPLATE */
 
 function page(title, body, user = null) {
   const isAdmin = Boolean(user?.is_admin);
@@ -454,13 +467,30 @@ function page(title, body, user = null) {
     <a class="menu-link" href="/logout">⇥ Logout</a>
   ` : "";
 
+  const customerNav = user ? `
+    <div class="customer-drawer" id="customerDrawer">
+      <div class="drawer-head">
+        <div class="drawer-logo">👑 ROYAL PANEL</div>
+        <div class="drawer-user">${esc(user.username)}</div>
+      </div>
+      <a href="/services">🏠 Dashboard / New Order</a>
+      <a href="/orders">📦 My Orders</a>
+      <a href="/funds">💳 Add Funds</a>
+      <a href="/refund">↩ Refund Request</a>
+      <a href="/support">🎧 Support</a>
+      ${user.is_admin ? '<a href="/admin">⚙ Admin Panel</a>' : ""}
+      <a href="/logout">↪ Logout</a>
+    </div>
+    <div class="drawer-overlay" id="drawerOverlay" onclick="closeCustomerMenu()"></div>
+  ` : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#101b38">
-<title>${esc(title)} | Royal SMM Seller</title>
+<meta name="theme-color" content="${user && !isAdmin ? "#159b55" : "#101b38"}">
+<title>${esc(title)} | Royal Panel</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f2f4ff;color:#101b38;font-family:Arial,sans-serif}
@@ -509,7 +539,6 @@ td{color:#25334f}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
 .form-card{max-width:650px;margin:20px auto}
 .customer-main{max-width:900px;margin:22px auto;padding:0 12px 100px}
-.customer-header{background:#20ad62;color:white;padding:16px;font-weight:bold}
 .customer-menu{display:flex;flex-wrap:wrap;gap:10px;padding:12px;background:white}
 .customer-menu a{padding:10px;color:#16894b}
 .social-float{position:fixed;right:14px;bottom:14px;display:flex;gap:9px;z-index:30}
@@ -520,6 +549,52 @@ td{color:#25334f}
 .progress{height:9px;border-radius:20px;background:#e8edf5;overflow:hidden;margin:10px 0}
 .progress span{display:block;height:100%;background:#0ab879}
 .mobile-menu{display:none}
+
+/* VIDEO STYLE CUSTOMER PANEL */
+
+.customer-topbar{height:66px;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 17px;border-bottom:1px solid #e8eee9;position:sticky;top:0;z-index:50}
+.customer-brand{font-weight:900;color:#159b55;font-size:19px;letter-spacing:.3px}
+.hamburger{width:43px;height:43px;border-radius:12px;background:#eaf8ef;color:#159b55;font-size:24px;display:flex;align-items:center;justify-content:center;padding:0}
+.customer-user{font-size:12px;color:#53645a;font-weight:bold}
+.customer-drawer{position:fixed;top:0;left:-290px;width:280px;height:100vh;background:#fff;z-index:100;padding:0 15px 25px;box-shadow:8px 0 30px #0002;transition:left .25s;overflow:auto}
+.customer-drawer.open{left:0}
+.drawer-head{background:#159b55;color:#fff;padding:25px 16px;margin:0 -15px 12px;border-radius:0 0 18px 18px}
+.drawer-logo{font-weight:900;font-size:20px}
+.drawer-user{font-size:13px;margin-top:8px;opacity:.9}
+.customer-drawer>a{display:block;padding:14px 12px;color:#273b2e;border-radius:10px;font-size:14px;font-weight:700;margin:4px 0}
+.customer-drawer>a:hover{background:#eaf8ef;color:#159b55}
+.drawer-overlay{display:none;position:fixed;inset:0;background:#0007;z-index:90}
+.drawer-overlay.show{display:block}
+.customer-main{max-width:900px;margin:22px auto;padding:0 12px 100px}
+.customer-main .card{border:1px solid #e5eee7;border-radius:16px;box-shadow:0 5px 22px #163c2110}
+.customer-main h2{color:#1b3826}
+.customer-main button{background:#159b55;border-radius:10px}
+.customer-main input:focus,.customer-main select:focus,.customer-main textarea:focus{outline:2px solid #b9e9ca;border-color:#159b55}
+.customer-main .notice{background:#effaf2;color:#167a40}
+.auth-page{min-height:calc(100vh - 66px);display:flex;align-items:center;justify-content:center;padding:22px 12px;background:linear-gradient(180deg,#f3fff6,#f7faf7)}
+.auth-card{width:100%;max-width:440px;background:#fff;border:1px solid #e4eee6;border-radius:22px;padding:27px 23px;box-shadow:0 12px 40px #164d2810}
+.auth-logo{text-align:center;font-size:27px;font-weight:900;color:#159b55;margin:4px 0 18px}
+.auth-title{text-align:center;font-size:25px;font-weight:900;color:#1c3425;margin:0 0 7px}
+.auth-subtitle{text-align:center;color:#819087;font-size:13px;margin:0 0 23px}
+.auth-card label{color:#344c3b;font-size:13px}
+.auth-card input{border-radius:11px;padding:14px;border-color:#dce9df;margin:7px 0 13px}
+.auth-submit{width:100%;background:#159b55!important;padding:14px!important;border-radius:11px!important;font-size:15px}
+.auth-google{display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid #dce8df;border-radius:11px;padding:13px;color:#304638;font-weight:700;margin-top:14px}
+.auth-google:hover{background:#f4faf5}
+.auth-bottom{text-align:center;font-size:13px;color:#66766b;margin:19px 0 0}
+.auth-bottom a,.forgot-link{color:#159b55;font-weight:800}
+.auth-options{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 16px;font-size:12px}
+.remember{display:flex;align-items:center;gap:7px;color:#617167;font-weight:500}
+.remember input{width:auto;margin:0}
+.captcha-box{padding:12px;background:#effaf2;border-radius:10px;margin:5px 0 12px;color:#277442;font-weight:bold}
+.terms-line{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#66766b;margin:8px 0 15px}
+.terms-line input{width:auto;margin:2px 0 0}
+.auth-divider{display:flex;align-items:center;gap:12px;color:#9aa69d;font-size:12px;margin:17px 0}
+.auth-divider:before,.auth-divider:after{content:"";height:1px;background:#e6eee8;flex:1}
+.auth-footer{text-align:center;font-size:11px;color:#9aa69d;margin-top:22px}
+.customer-welcome{background:linear-gradient(120deg,#159b55,#21b86b);color:white;border-radius:16px;padding:20px;margin-bottom:15px}
+.customer-welcome h2{color:#fff!important;margin:0 0 7px}
+.customer-welcome p{margin:0;font-size:13px;opacity:.9}
 @media(max-width:1000px){
 .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .bottom-grid{grid-template-columns:1fr 1fr}
@@ -536,22 +611,29 @@ td{color:#25334f}
 .content-grid,.bottom-grid{grid-template-columns:1fr}
 .mobile-menu{display:inline-block}
 .topbar{height:60px;padding:0 12px}
+.customer-main{margin:14px auto;padding:0 10px 100px}
+.auth-card{padding:24px 19px}
 }
 </style>
 </head>
 <body>
+
+${user && !isAdmin ? `
+<header class="customer-topbar">
+  <button class="hamburger" onclick="openCustomerMenu()" aria-label="Open menu">☰</button>
+  <a class="customer-brand" href="/services">👑 ROYAL PANEL</a>
+  <span class="customer-user">${esc(user.username)}</span>
+</header>
+${customerNav}
+<main class="customer-main">${body}</main>
+` : isAdmin ? `
 <header class="topbar">
-  <a href="${isAdmin ? "/admin" : user ? "/services" : "/login"}"
-     style="font-weight:900;color:#101b38;font-size:20px">
+  <a href="/admin" style="font-weight:900;color:#101b38;font-size:20px">
     👑 Royal <span style="color:#ef3030">SMM Seller</span>
   </a>
-  ${user ? `<span style="font-size:13px;color:#34415f">
-    ${esc(user.username)} ${isAdmin ? " · Admin" : ""}
-  </span>` : ""}
-  ${isAdmin ? `<button class="mobile-menu" onclick="document.getElementById('sidebar').classList.toggle('show')">☰</button>` : ""}
+  <span style="font-size:13px;color:#34415f">${esc(user.username)} · Admin</span>
+  <button class="mobile-menu" onclick="document.getElementById('sidebar').classList.toggle('show')">☰</button>
 </header>
-
-${isAdmin ? `
 <div class="admin-shell">
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-logo">
@@ -567,16 +649,24 @@ ${isAdmin ? `
 <section class="admin-content">${body}</section>
 </div>
 ` : `
-${user ? `<nav class="customer-menu">
-<a href="/services">New Order</a><a href="/orders">My Orders</a>
-<a href="/funds">Add Funds</a><a href="/refund">Refund</a>
-<a href="/support">Support</a>
-${user.is_admin ? '<a href="/admin">Admin Panel</a>' : ""}
-<a href="/logout">Logout</a>
-</nav>` : ""}
-<main class="customer-main">${body}</main>
+<header class="customer-topbar">
+  <a class="customer-brand" href="/login">👑 ROYAL PANEL</a>
+  <span style="font-size:12px;color:#607267">Panel Admin SMM.shop</span>
+</header>
+${body}
 `}
+
 ${user ? socialSupportLinks() : ""}
+<script>
+function openCustomerMenu(){
+  document.getElementById('customerDrawer')?.classList.add('open');
+  document.getElementById('drawerOverlay')?.classList.add('show');
+}
+function closeCustomerMenu(){
+  document.getElementById('customerDrawer')?.classList.remove('open');
+  document.getElementById('drawerOverlay')?.classList.remove('show');
+}
+</script>
 </body>
 </html>`;
 }
@@ -615,20 +705,34 @@ app.get("/", (req, res) => {
 /* LOGIN */
 
 app.get("/login", (req, res) => {
+  if (req.session.user) {
+    return res.redirect(req.session.user.is_admin ? "/admin" : "/services");
+  }
+
   res.send(page("Login", `
-    <div class="card form-card">
-      <h2>Welcome Back</h2>
-      <p class="muted">Sign in to your Royal SMM Seller account</p>
-      <form method="POST" action="/login">
-        <label>Email or Username</label>
-        <input name="email" required>
-        <label>Password</label>
-        <input name="password" type="password" required>
-        <button style="width:100%">Sign In</button>
-      </form>
-      <p style="text-align:center">OR</p>
-      <a href="/auth/google">🌐 Sign in with Google</a>
-      <p>Don't have an account? <a href="/register">Register</a></p>
+    <div class="auth-page">
+      <div class="auth-card">
+        <div class="auth-logo">👑 ROYAL PANEL</div>
+        <h1 class="auth-title">Welcome Back!</h1>
+        <p class="auth-subtitle">Sign in to continue to your account</p>
+        <form method="POST" action="/login">
+          <label>Username or Email</label>
+          <input name="email" placeholder="Enter username or email" autocomplete="username" required>
+          <label>Password</label>
+          <input name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+          <div class="auth-options">
+            <label class="remember"><input type="checkbox" name="remember" checked> Remember me</label>
+            <a class="forgot-link" href="/forgot-password">Forgot Password?</a>
+          </div>
+          <button class="auth-submit">Sign In</button>
+        </form>
+        <div class="auth-divider">OR</div>
+        <a class="auth-google" href="/auth/google">
+          <span style="font-size:19px">G</span> Continue with Google
+        </a>
+        <p class="auth-bottom">Don't have an account? <a href="/register">Get Started!</a></p>
+        <div class="auth-footer">Secure Login · Royal Panel</div>
+      </div>
     </div>
   `));
 });
@@ -648,30 +752,70 @@ app.post("/login", async (req, res, next) => {
 
     if (!u || !hash ||
         !await bcrypt.compare(String(req.body.password || ""), hash)) {
-      return res.status(401).send(page("Login", message("Invalid login details")));
+      return res.status(401).send(page("Login", `
+        <div class="auth-page"><div class="auth-card">
+          ${message("Invalid username/email or password. Please try again.")}
+          <a href="/login">Back to Login</a>
+        </div></div>
+      `));
     }
 
-    createUserSession(req, u, res);
+    createUserSession(req, u, res, req.body.remember === "on");
   } catch (e) { next(e); }
+});
+
+/* FORGOT PASSWORD */
+
+app.get("/forgot-password", (req, res) => {
+  res.send(page("Forgot Password", `
+    <div class="auth-page">
+      <div class="auth-card">
+        <div class="auth-logo">👑 ROYAL PANEL</div>
+        <h2 class="auth-title">Forgot Password?</h2>
+        <p class="auth-subtitle">Contact our support team to recover your account.</p>
+        <a class="auth-submit" style="display:block;text-align:center;color:white;padding:14px" href="${esc(WHATSAPP_LINK)}" target="_blank" rel="noopener">Contact WhatsApp Support</a>
+        <p class="auth-bottom"><a href="/login">Back to Sign In</a></p>
+      </div>
+    </div>
+  `));
 });
 
 /* REGISTER */
 
 app.get("/register", (req, res) => {
+  if (req.session.user) return res.redirect("/services");
+
+  const question = captchaQuestion(req);
+
   res.send(page("Register", `
-    <div class="card form-card">
-      <h2>Create Account</h2>
-      <form method="POST" action="/register">
-        <label>Username</label>
-        <input name="username" required maxlength="100">
-        <label>Email</label>
-        <input name="email" type="email" required maxlength="200">
-        <label>Password</label>
-        <input name="password" type="password" minlength="6" required>
-        <button style="width:100%">Create Account</button>
-      </form>
-      <p><a href="/auth/google">Sign up with Google</a></p>
-      <p>Already registered? <a href="/login">Login</a></p>
+    <div class="auth-page">
+      <div class="auth-card">
+        <div class="auth-logo">👑 ROYAL PANEL</div>
+        <h1 class="auth-title">Get Started!</h1>
+        <p class="auth-subtitle">Create your account and start using our services</p>
+        <form method="POST" action="/register">
+          <label>Username</label>
+          <input name="username" placeholder="Choose a username" autocomplete="username" required maxlength="100">
+          <label>Email Address</label>
+          <input name="email" type="email" placeholder="Enter your email" autocomplete="email" required maxlength="200">
+          <label>Password</label>
+          <input name="password" type="password" placeholder="Create password (minimum 6 characters)" autocomplete="new-password" minlength="6" required>
+          <label>Confirm Password</label>
+          <input name="confirmPassword" type="password" placeholder="Enter password again" autocomplete="new-password" minlength="6" required>
+          <label>Security Check</label>
+          <div class="captcha-box">Solve this: ${esc(question)}</div>
+          <input name="captcha" type="number" placeholder="Enter answer" required>
+          <label class="terms-line">
+            <input type="checkbox" name="terms" required>
+            <span>I agree to the Terms and Conditions.</span>
+          </label>
+          <button class="auth-submit">Create Account</button>
+        </form>
+        <div class="auth-divider">OR</div>
+        <a class="auth-google" href="/auth/google"><span style="font-size:19px">G</span> Continue with Google</a>
+        <p class="auth-bottom">Already have an account? <a href="/login">Sign In</a></p>
+        <div class="auth-footer">Secure Registration · Royal Panel</div>
+      </div>
     </div>
   `));
 });
@@ -681,10 +825,42 @@ app.post("/register", async (req, res, next) => {
     const username = String(req.body.username || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
+    const confirmPassword = String(req.body.confirmPassword || "");
+    const captcha = String(req.body.captcha || "");
+    const expectedCaptcha = String(req.session.captchaAnswer || "");
+
+    delete req.session.captchaAnswer;
+
+    if (!expectedCaptcha || captcha !== expectedCaptcha) {
+      return res.status(400).send(page("Register", `
+        <div class="auth-page"><div class="auth-card">
+          ${message("Incorrect security answer. Please go back and try again.")}
+          <a href="/register">Try Registration Again</a>
+        </div></div>
+      `));
+    }
 
     if (!username || !email || password.length < 6 ||
         username.length > 100 || email.length > 200) {
-      return res.status(400).send(page("Register", message("Enter valid details")));
+      return res.status(400).send(page("Register", `
+        <div class="auth-page"><div class="auth-card">
+          ${message("Please enter valid registration details.")}
+          <a href="/register">Try Again</a>
+        </div></div>
+      `));
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).send(page("Register", `
+        <div class="auth-page"><div class="auth-card">
+          ${message("Password and Confirm Password do not match.")}
+          <a href="/register">Try Again</a>
+        </div></div>
+      `));
+    }
+
+    if (req.body.terms !== "on") {
+      return res.status(400).send("Please accept Terms and Conditions.");
     }
 
     const hash = await bcrypt.hash(password, 12);
@@ -695,10 +871,15 @@ app.post("/register", async (req, res, next) => {
       [username, email, hash]
     );
 
-    createUserSession(req, r.rows[0], res);
+    createUserSession(req, r.rows[0], res, true);
   } catch (e) {
     if (e.code === "23505") {
-      return res.status(400).send(page("Register", message("Username or email already exists")));
+      return res.status(400).send(page("Register", `
+        <div class="auth-page"><div class="auth-card">
+          ${message("Username or email already exists.")}
+          <a href="/register">Try Again</a>
+        </div></div>
+      `));
     }
     next(e);
   }
@@ -773,7 +954,7 @@ app.get("/auth/google/callback", async (req, res, next) => {
       user.is_admin = true;
     }
 
-    createUserSession(req, user, res);
+    createUserSession(req, user, res, true);
   } catch (e) { next(e); }
 });
 
@@ -786,7 +967,6 @@ app.get("/dashboard", requireLogin, (req, res) => {
 app.get("/services", requireLogin, async (req, res, next) => {
   try {
     const enabled = await setting("services_enabled");
-
     const wallet = await db("SELECT balance FROM users WHERE id=$1", [req.session.user.id]);
 
     const result = await db(
@@ -810,12 +990,17 @@ app.get("/services", requireLogin, async (req, res, next) => {
     const safePayload = JSON.stringify(payload).replace(/</g, "\\u003c");
 
     res.send(page("Services", `
+      <div class="customer-welcome">
+        <h2>Welcome, ${esc(req.session.user.username)}!</h2>
+        <p>Welcome to Royal Panel. Manage your Instagram services here.</p>
+      </div>
       <div class="card">
-        <div style="background:#138e50;color:white;padding:16px;border-radius:10px">
-          WALLET BALANCE
-          <h2 style="color:white">₹${money(wallet.rows[0]?.balance)}</h2>
+        <div style="background:#159b55;color:white;padding:17px;border-radius:12px">
+          <div style="font-size:12px;font-weight:bold;opacity:.9">WALLET BALANCE</div>
+          <h2 style="color:white;margin:8px 0 0">₹${money(wallet.rows[0]?.balance)}</h2>
+          <a href="/funds" style="display:inline-block;background:white;color:#159b55;padding:9px 14px;border-radius:9px;margin-top:12px;font-size:13px;font-weight:bold">+ Add Funds</a>
         </div>
-        <h2>Instagram New Order</h2>
+        <h2 style="margin-top:22px">Instagram New Order</h2>
         ${enabled === "true" ? `
         <form method="POST" action="/order" id="orderForm">
           <label>Search Instagram Services</label>
@@ -834,9 +1019,9 @@ app.get("/services", requireLogin, async (req, res, next) => {
           <label>Average Time</label>
           <div class="notice" id="averageTime">—</div>
           <label>Instagram Link</label>
-          <input name="link" required maxlength="2000">
+          <input name="link" required maxlength="2000" placeholder="Paste Instagram post/profile link">
           <label>Quantity</label>
-          <input name="quantity" id="quantity" type="number" min="1" required>
+          <input name="quantity" id="quantity" type="number" min="1" required placeholder="Enter quantity">
           <div class="muted" id="quantityLimit"></div>
           <label>Charge</label>
           <h2 id="charge">₹0.00</h2>
@@ -1018,7 +1203,7 @@ app.get("/orders", requireLogin, async (req, res, next) => {
     res.send(page("My Orders", `
       <div class="card"><h2>My Orders</h2><div class="table-wrap">
       <table><tr><th>ID</th><th>Service</th><th>Quantity</th><th>Charge</th><th>Status</th></tr>
-      ${rows}</table></div></div>
+      ${rows || "<tr><td colspan='5'>No orders yet</td></tr>"}</table></div></div>
     `, req.session.user));
   } catch (e) { next(e); }
 });
@@ -1127,6 +1312,8 @@ app.get("/support", requireLogin, (req, res) => {
           placeholder="Write your message"></textarea>
         <button>Send Message</button>
       </form>
+      <p><a href="${esc(WHATSAPP_LINK)}" target="_blank">WhatsApp Support</a></p>
+      <p><a href="${esc(TELEGRAM_LINK)}" target="_blank">Telegram Support</a></p>
     </div>
   `, req.session.user));
 });
@@ -1146,7 +1333,7 @@ app.post("/support", requireLogin, async (req, res, next) => {
 
 app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
   try {
-    const [stats, recentUsers, recentOrders, recentPayments, revenue, settings] =
+    const [stats, recentUsers, recentOrders, recentPayments, revenue] =
       await Promise.all([
         db(`
           SELECT
@@ -1169,26 +1356,21 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
           AND created_at >= NOW()-INTERVAL '30 days'
           GROUP BY date_trunc('day',created_at)
           ORDER BY date_trunc('day',created_at)
-        `),
-        Promise.all([setting("provider_enabled"), setting("services_enabled")])
+        `)
       ]);
 
     const x = stats.rows[0];
-    const users = recentUsers.rows;
-    const orders = recentOrders.rows;
-    const payments = recentPayments.rows;
-
-    const userRows = users.map(u => `
+    const userRows = recentUsers.rows.map(u => `
       <tr><td>${esc(u.username)}</td><td>${esc(u.email || "—")}</td>
       <td>${new Date(u.created_at).toLocaleDateString("en-IN")}</td></tr>
     `).join("");
 
-    const orderRows = orders.map(o => `
+    const orderRows = recentOrders.rows.map(o => `
       <tr><td>#${esc(o.id)}</td><td>${esc(o.service_name || "Service")}</td>
       <td>${esc(o.quantity)}</td><td>${esc(o.status)}</td></tr>
     `).join("");
 
-    const paymentRows = payments.map(p => `
+    const paymentRows = recentPayments.rows.map(p => `
       <tr><td>₹${money(p.amount)}</td><td>${esc(p.status)}</td>
       <td>${new Date(p.created_at).toLocaleDateString("en-IN")}</td></tr>
     `).join("");
@@ -1218,9 +1400,7 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
       <div class="content-grid" style="margin-top:16px">
         <div class="card">
           <h3 class="panel-title">Payment Statistics</h3>
-          <div style="font-size:35px;font-weight:900;color:#08a96e">
-            ₹${money(x.monthly_revenue)}
-          </div>
+          <div style="font-size:35px;font-weight:900;color:#08a96e">₹${money(x.monthly_revenue)}</div>
           <p class="muted">Approved Payments This Month</p>
           <div class="progress"><span style="width:${Number(x.pending_payments) ? 75 : 100}%"></span></div>
           <p>Pending payments: <b>${esc(x.pending_payments)}</b></p>
@@ -1228,44 +1408,32 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
           <p>Pending orders: <b>${esc(x.pending_orders)}</b></p>
           <a href="/admin/payments">View Payments →</a>
         </div>
-
         <div class="card">
           <h3 class="panel-title">Revenue Overview · Last 30 Days</h3>
-          <div class="chart-box"><svg id="revenueChart" viewBox="0 0 600 190"
-            preserveAspectRatio="none"></svg></div>
+          <div class="chart-box"><svg id="revenueChart" viewBox="0 0 600 190" preserveAspectRatio="none"></svg></div>
           <p class="muted">Daily approved payment totals</p>
         </div>
       </div>
 
       <div class="bottom-grid">
-        <div class="card">
-          <h3 class="panel-title">♟ Recent Users</h3>
-          <div class="table-wrap"><table>
-            <tr><th>User</th><th>Email</th><th>Date</th></tr>
-            ${userRows || "<tr><td colspan='3'>No users yet</td></tr>"}
-          </table></div>
+        <div class="card"><h3 class="panel-title">♟ Recent Users</h3>
+          <div class="table-wrap"><table><tr><th>User</th><th>Email</th><th>Date</th></tr>
+          ${userRows || "<tr><td colspan='3'>No users yet</td></tr>"}</table></div>
           <p><a href="/admin/users">View All →</a></p>
         </div>
-        <div class="card">
-          <h3 class="panel-title">🛒 Recent Orders</h3>
-          <div class="table-wrap"><table>
-            <tr><th>Order</th><th>Service</th><th>Qty</th><th>Status</th></tr>
-            ${orderRows || "<tr><td colspan='4'>No orders yet</td></tr>"}
-          </table></div>
+        <div class="card"><h3 class="panel-title">🛒 Recent Orders</h3>
+          <div class="table-wrap"><table><tr><th>Order</th><th>Service</th><th>Qty</th><th>Status</th></tr>
+          ${orderRows || "<tr><td colspan='4'>No orders yet</td></tr>"}</table></div>
           <p><a href="/admin/orders">View All →</a></p>
         </div>
-        <div class="card">
-          <h3 class="panel-title">▣ Recent Payments</h3>
-          <div class="table-wrap"><table>
-            <tr><th>Amount</th><th>Status</th><th>Date</th></tr>
-            ${paymentRows || "<tr><td colspan='3'>No payments yet</td></tr>"}
-          </table></div>
+        <div class="card"><h3 class="panel-title">▣ Recent Payments</h3>
+          <div class="table-wrap"><table><tr><th>Amount</th><th>Status</th><th>Date</th></tr>
+          ${paymentRows || "<tr><td colspan='3'>No payments yet</td></tr>"}</table></div>
           <p><a href="/admin/payments">View All →</a></p>
         </div>
       </div>
 
-      <div class="card">
-        <h3 class="panel-title">Quick Management</h3>
+      <div class="card"><h3 class="panel-title">Quick Management</h3>
         <div class="grid">
           <a href="/admin/users">👥 Manage Users</a>
           <a href="/admin/services">🛠 Manage Services & Prices</a>
@@ -1288,13 +1456,9 @@ app.get("/admin", requireLogin, requireAdmin, async (req, res, next) => {
           const py=165-(x.amount/max)*140;
           return px+','+py;
         }).join(' ');
-        svg.innerHTML=
-          '<line x1="20" y1="165" x2="580" y2="165" stroke="#dce3f1"/>'+
+        svg.innerHTML='<line x1="20" y1="165" x2="580" y2="165" stroke="#dce3f1"/>'+
           '<polyline points="'+points+'" fill="none" stroke="#384cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>'+
-          points.split(' ').map(p=>{
-            const a=p.split(',');
-            return '<circle cx="'+a[0]+'" cy="'+a[1]+'" r="4" fill="#384cff"/>';
-          }).join('');
+          points.split(' ').map(p=>{const a=p.split(',');return '<circle cx="'+a[0]+'" cy="'+a[1]+'" r="4" fill="#384cff"/>';}).join('');
       }else{
         svg.innerHTML='<text x="180" y="95" fill="#78849c">No revenue data yet</text>';
       }
@@ -1336,12 +1500,8 @@ app.get("/admin/provider", requireLogin, requireAdmin, async (req, res, next) =>
           <button name="value" value="true">Enable Provider</button>
           <button name="value" value="false">Disable Provider</button>
         </form>
-        <form method="POST" action="/admin/provider-test">
-          <button>Test Provider API</button>
-        </form>
-        <form method="POST" action="/admin/import">
-          <button>Import / Update Instagram Services</button>
-        </form>
+        <form method="POST" action="/admin/provider-test"><button>Test Provider API</button></form>
+        <form method="POST" action="/admin/import"><button>Import / Update Instagram Services</button></form>
       </div>
     `, req.session.user));
   } catch (e) { next(e); }
@@ -1426,7 +1586,7 @@ app.post("/admin/import", requireLogin, requireAdmin, async (req, res) => {
   }
 });
 
-/* ADMIN SERVICES AND PRICE MANAGEMENT */
+/* ADMIN SERVICES */
 
 app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) => {
   try {
@@ -1444,12 +1604,9 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) =>
         <td>${s.active ? '<span class="badge">Active</span>' : '<span class="badge failed">Disabled</span>'}</td>
         <td>
           <form method="POST" action="/admin/service/${esc(s.id)}">
-            <input name="rate" type="number" step=".0001" min="0"
-              value="${esc(s.rate)}" required>
+            <input name="rate" type="number" step=".0001" min="0" value="${esc(s.rate)}" required>
             <button name="action" value="save">Save Price</button>
-            <button name="action" value="${s.active ? "disable" : "enable"}">
-              ${s.active ? "Disable" : "Enable"}
-            </button>
+            <button name="action" value="${s.active ? "disable" : "enable"}">${s.active ? "Disable" : "Enable"}</button>
           </form>
         </td>
       </tr>
@@ -1459,14 +1616,10 @@ app.get("/admin/services", requireLogin, requireAdmin, async (req, res, next) =>
       <div class="admin-heading"><div><h1>Services Management</h1>
       <p>Manage Instagram services and selling prices</p></div></div>
       <div class="card">
-        <form method="POST" action="/admin/import">
-          <button>Import / Update Services</button>
-        </form>
+        <form method="POST" action="/admin/import"><button>Import / Update Services</button></form>
         <input id="adminSearch" placeholder="Search service ID, name or category">
         <div class="table-wrap"><table>
-          <thead><tr><th>ID</th><th>Category</th><th>Service</th>
-          <th>Limits</th><th>Provider Rate</th><th>Selling Rate / 1K</th>
-          <th>Status</th><th>Manage Price</th></tr></thead>
+          <thead><tr><th>ID</th><th>Category</th><th>Service</th><th>Limits</th><th>Provider Rate</th><th>Selling Rate / 1K</th><th>Status</th><th>Manage Price</th></tr></thead>
           <tbody id="serviceRows">${rows}</tbody>
         </table></div>
       </div>
@@ -1532,8 +1685,7 @@ app.get("/admin/payments", requireLogin, requireAdmin, async (req, res, next) =>
       <div class="admin-heading"><div><h1>Add Funds / Payments</h1>
       <p>Review and approve customer payments</p></div></div>
       <div class="card"><div class="table-wrap"><table>
-      <tr><th>ID</th><th>User</th><th>Email</th><th>Amount</th>
-      <th>UTR</th><th>Status</th><th>Action</th></tr>
+      <tr><th>ID</th><th>User</th><th>Email</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
       ${rows || "<tr><td colspan='7'>No payments</td></tr>"}
       </table></div></div>
     `, req.session.user));
@@ -1646,8 +1798,7 @@ app.get("/admin/users", requireLogin, requireAdmin, async (req, res, next) => {
       <td>${u.is_admin ? "Admin" : "Customer"}</td><td>
       ${!u.is_admin ? `
         <form method="POST" action="/admin/user/${esc(u.id)}">
-          <input name="amount" type="number" step=".01" min="0"
-            placeholder="Wallet amount" required>
+          <input name="amount" type="number" step=".01" min="0" placeholder="Wallet amount" required>
           <button name="action" value="add">Add</button>
           <button name="action" value="remove">Deduct</button>
         </form>` : "Protected"}
@@ -1658,8 +1809,7 @@ app.get("/admin/users", requireLogin, requireAdmin, async (req, res, next) => {
       <div class="admin-heading"><div><h1>Users Management</h1>
       <p>Customer accounts and wallet management</p></div></div>
       <div class="card"><input id="userSearch" placeholder="Search users">
-      <div class="table-wrap"><table><tr><th>ID</th><th>Username</th>
-      <th>Email</th><th>Balance</th><th>Role</th><th>Wallet Control</th></tr>
+      <div class="table-wrap"><table><tr><th>ID</th><th>Username</th><th>Email</th><th>Balance</th><th>Role</th><th>Wallet Control</th></tr>
       <tbody id="userRows">${rows}</tbody></table></div></div>
       <script>
       document.getElementById('userSearch').addEventListener('input',e=>{
@@ -1727,8 +1877,7 @@ app.get("/admin/orders", requireLogin, requireAdmin, async (req, res, next) => {
       <div class="admin-heading"><div><h1>Orders Management</h1>
       <p>Review customer orders and update status</p></div></div>
       <div class="card"><div class="table-wrap"><table>
-      <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th>
-      <th>Charge</th><th>Status</th><th>Provider ID</th><th>Update</th></tr>
+      <tr><th>ID</th><th>User</th><th>Service</th><th>Qty</th><th>Charge</th><th>Status</th><th>Provider ID</th><th>Update</th></tr>
       ${rows || "<tr><td colspan='8'>No orders</td></tr>"}
       </table></div></div>
     `, req.session.user));
